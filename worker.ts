@@ -55,6 +55,19 @@ export default {
         service: "voice-chat-server",
         version: "1.0.0",
       })
+    // 临时管理接口：释放房间名额（测试清理用，验证后删除）
+    } else if (pathname === "/api/admin/release-room" && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as { room?: string }
+      const registry = (env as any).SERVER_REGISTRY.get(
+        (env as any).SERVER_REGISTRY.idFromName("registry")
+      )
+      response = await registry.fetch(
+        new Request("https://registry/release", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room: body.room }),
+        })
+      )
     } else {
       response = Response.json({ error: "not_found" }, { status: 404 })
     }
