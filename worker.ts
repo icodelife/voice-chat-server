@@ -58,6 +58,11 @@ export default {
       response = Response.json({ error: "not_found" }, { status: 404 })
     }
 
+    // WebSocket 握手响应不能包装，直接返回
+    if (response.status === 101) {
+      return response
+    }
+
     return withCors(response, origin)
   },
 }
