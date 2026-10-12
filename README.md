@@ -6,6 +6,7 @@
 
 - 🎙️ **语音聊天**：基于 Cloudflare Realtime SFU，WebRTC 低延迟
 - 💬 **文字聊天**：WebSocket 实时消息
+- 🔒 **密码房**：建房时可设密码（默认开启，可通过 `ALLOW_PASSWORD_ROOMS=false` 关闭）
 - 🌐 **联邦模式**：默认放开 Origin 限制，任何客户端可连接
 - 🚦 **房间限流**：每房间最多 10 人
 - 📦 **纯后端**：无前端，轻量部署
@@ -35,6 +36,12 @@
 4. 跑完后把日志里的 `SFU_APP_ID` 加到 Secrets
 
 完成！你的服务端地址是 `https://voice-chat-server.<你的子域>.workers.dev`
+
+### 可选配置
+
+| 变量 | 位置 | 说明 |
+|------|------|------|
+| `ALLOW_PASSWORD_ROOMS` | Variables | 设为 `false` 可关闭密码房功能。默认不设置即为开启 |
 
 ### API 接口
 
