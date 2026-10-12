@@ -34,7 +34,10 @@ Response 200:
 }
 
 Response 429:
-{ "error": "room_full", "max": 10 }  # 房间满员
+{ "error": "room_full", "max": 10 }  # 房间满员（每房间最多 10 人）
+
+Response 429:
+{ "error": "room_limit_reached", "max": 5 }  # 服务端活跃房间数达上限（默认每服 5 房）
 
 Response 403:
 { "error": "password_required" }    # 房间有密码但未提供
@@ -131,9 +134,10 @@ Body: { "room": "...", "participantId": "...", "token": "...", "sessionId": "...
 | `SFU_APP_SECRET` | secret | Cloudflare Realtime App Secret |
 | `DISABLE_ORIGIN_CHECK` | var | 设为 `true` 放开 Origin 限制（默认） |
 | `ALLOWED_ORIGINS` | var（可选） | 逗号分隔的白名单域名 |
+| `MAX_ROOMS_PER_SERVER` | var（可选） | 每服务端最大活跃房间数，默认 `5`；设为 `0` 不限制 |
 
 ## 注意事项
 
 1. **联邦模式**：默认放开 Origin 限制，任何客户端可连接
-2. **房间限流**：每房间最多 10 人
+2. **房间限流**：每服务端最多 5 个活跃房间（30 分钟无新加入视为不活跃并释放名额），每房间最多 10 人
 3. **房间自动清理**：最后一人离开 30 分钟后清除数据

@@ -13,6 +13,7 @@ const RATE_LIMIT_WINDOW_S = 60
 
 export interface SfuEnv {
   SFU_ROOM: DurableObjectNamespace<RoomSession>
+  SERVER_REGISTRY: DurableObjectNamespace
   ROOMS_KV?: KVNamespace
   SFU_APP_ID?: string
   SFU_APP_SECRET?: string
@@ -33,6 +34,8 @@ export interface SfuEnv {
   DISABLE_ORIGIN_CHECK?: string
   // 密码房开关：设为 "false" 则禁止创建密码房。默认 "true"（模板用户直接可用）。
   ALLOW_PASSWORD_ROOMS?: string
+  // 服务端级房间数上限：默认 "5"。设为 "0" 表示不限制。
+  MAX_ROOMS_PER_SERVER?: string
   // Coarse, environment-wide master switch for Agent SFU media (#82).
   // Absent/anything other than "true" => agent-session/agent-room-media
   // reject unconditionally, and RoomSession also refuses to ever start a
@@ -545,6 +548,34 @@ export async function handleSfuRequest(
       if (!auth.ok) return auth
     } else if (!(await verifyTurnstile(body.turnstileToken, env))) {
       return json({ error: "verification_failed" }, 403)
+    }
+
+    // 限流：每服务端最多 N 个活跃房间（默认 5，设为 0 不限制）
+    // 重连不占新名额，直接跳过
+    if (!isReconnect) {
+      const maxRooms = parseInt(env.MAX_ROOMS_PER_SERVER ?? "5", 10)
+      if (!Number.isNaN(maxRooms) && maxRooms > 0) {
+        try {
+          const registry = env.SERVER_REGISTRY.get(
+            env.SERVER_REGISTRY.idFromName("registry")
+          )
+          const checkResp = await registry.fetch(
+            new Request("https://registry/check", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ room, maxRooms }),
+            })
+          )
+          if (checkResp.status === 429) {
+            return json(
+              { error: "room_limit_reached", max: maxRooms },
+              429
+            )
+          }
+        } catch {
+          // 注册表查询失败 → 不阻塞建会话（降级），与 room-info 检查保持一致
+        }
+      }
     }
 
     // 限流：每房间最多 10 人

@@ -70,6 +70,7 @@ Content-Type: application/json
 | 403 | `password_incorrect` | 密码错误 | 提示重新输入 |
 | 403 | `password_not_allowed` | 该服务器禁用密码房 | 提示用户换服务器或不设密码 |
 | 429 | `room_full` | 房间满员（最多 10 人） | 提示房间已满 |
+| 429 | `room_limit_reached` | 服务端活跃房间数达上限（默认 5） | 提示服务器繁忙，请稍后再试 |
 | 502 | `sfu_session_failed` | SFU 会话创建失败 | 提示服务端异常，稍后重试 |
 
 **密码房规则：**
@@ -270,6 +271,7 @@ GET {BASE_URL}/health
 | `SFU_APP_ID` | var | — | Cloudflare Realtime App ID（必需） |
 | `SFU_APP_SECRET` | secret | — | Cloudflare Realtime App Secret（必需） |
 | `ALLOW_PASSWORD_ROOMS` | var | `true` | 设为 `false` 禁用密码房 |
+| `MAX_ROOMS_PER_SERVER` | var | `5` | 每服务端最大活跃房间数；设为 `0` 不限制 |
 | `DISABLE_ORIGIN_CHECK` | var | `true` | 设为 `true` 放开 Origin 限制（联邦模式） |
 | `ALLOWED_ORIGINS` | var | — | 逗号分隔的白名单域名（收紧 Origin 时用） |
 

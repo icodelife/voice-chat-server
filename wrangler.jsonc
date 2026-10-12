@@ -9,6 +9,10 @@
       {
         "class_name": "RoomSession",
         "name": "SFU_ROOM"
+      },
+      {
+        "class_name": "ServerRegistry",
+        "name": "SERVER_REGISTRY"
       }
     ]
   },
@@ -19,6 +23,12 @@
         "RoomSession"
       ],
       "tag": "v1"
+    },
+    {
+      "new_sqlite_classes": [
+        "ServerRegistry"
+      ],
+      "tag": "v2"
     }
   ],
   "name": "voice-chat-server",
