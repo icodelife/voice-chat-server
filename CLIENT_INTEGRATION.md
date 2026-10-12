@@ -302,8 +302,8 @@ A: 最后一人离开 30 分钟后自动清除。同名房间之后再进是全�
 **Q: 需要处理 Turnstile 验证吗？**
 A: 不需要。模板默认不启用 Turnstile。
 
-**Q: iOS / Android 原生客户端能用吗？**
-A: 可以。API 都是标准 HTTPS + WebSocket + WebRTC，无浏览器特有依赖。注意 Origin 限制对原生 App 不生效（无 Origin 头）。
+**Q: iOS / Android / 小程序等原生客户端能用吗？**
+A: 可以。API 都是标准 HTTPS + WebSocket + WebRTC，无浏览器特有依赖。联邦模式（`DISABLE_ORIGIN_CHECK=true`，默认开启）下，不带 Origin 头的原生请求（小程序 `wx.request` / `wx.connectSocket`、App、curl）可直接调用所有接口，无需伪造 Origin。只有在关闭联邦模式（严格白名单）时，原生客户端才需要联系服务端部署者加白名单。
 
 **Q: 密码是明文传输的吗？**
 A: 密码通过 HTTPS POST 传输（TLS 加密），服务端只存 SHA-256 哈希。但请勿使用重要密码，房间密码仅为轻量防打扰机制。
