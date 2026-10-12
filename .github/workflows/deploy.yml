@@ -34,17 +34,12 @@ jobs:
       - name: Detect Account ID
         id: account
         run: |
-          if [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
-            echo "id=${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" >> $GITHUB_OUTPUT
-            echo "使用配置的 CLOUDFLARE_ACCOUNT_ID"
-          else
-            # 从 token 自动获取（取第一个账号）
-            RESP=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              "https://api.cloudflare.com/client/v4/accounts")
-            ACCOUNT_ID=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result'][0]['id'])")
-            echo "id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
-            echo "从 token 自动获取账号 ID: $ACCOUNT_ID"
-          fi
+          # 从 token 自动获取账号 ID（建 token 时请只勾选一个账号）
+          RESP=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts")
+          ACCOUNT_ID=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result'][0]['id'])")
+          echo "id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "账号 ID: $ACCOUNT_ID"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
