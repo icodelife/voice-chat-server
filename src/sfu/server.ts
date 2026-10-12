@@ -31,6 +31,8 @@ export interface SfuEnv {
   ALLOWED_ORIGINS?: string
   // 联邦模式：设为 "true" 则完全跳过来源检查。
   DISABLE_ORIGIN_CHECK?: string
+  // 密码房开关：设为 "false" 则禁止创建密码房。默认 "true"（模板用户直接可用）。
+  ALLOW_PASSWORD_ROOMS?: string
   // Coarse, environment-wide master switch for Agent SFU media (#82).
   // Absent/anything other than "true" => agent-session/agent-room-media
   // reject unconditionally, and RoomSession also refuses to ever start a
@@ -477,11 +479,34 @@ export async function handleSfuRequest(
     if (!body) return badRequest("invalid_json")
     const room = typeof body.room === "string" ? body.room.trim() : ""
     const name = typeof body.name === "string" ? body.name.trim() : ""
+    const password =
+      typeof body.password === "string" ? body.password : ""
     if (body.kind === "agent") return badRequest("agent_sessions_not_supported")
     if (!room || room.length > MAX_ROOM_LENGTH)
       return badRequest("invalid_room")
     if (!name || name.length > MAX_NAME_LENGTH)
       return badRequest("invalid_name")
+
+    // 密码房开关：默认 true（模板用户直接可用），官方服务器设为 false
+    const allowPasswordRooms = env.ALLOW_PASSWORD_ROOMS !== "false"
+    if (password && !allowPasswordRooms) {
+      return json({ error: "password_not_allowed" }, 403)
+    }
+    // 密码长度限制
+    if (password && (password.length < 4 || password.length > 64)) {
+      return badRequest("invalid_password")
+    }
+
+    // 计算密码哈希（SHA-256）
+    let passwordHash: string | undefined
+    if (password) {
+      const encoder = new TextEncoder()
+      const data = encoder.encode(password)
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data)
+      passwordHash = Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+    }
 
     const reconnect =
       body.reconnect && typeof body.reconnect === "object"
@@ -537,6 +562,7 @@ export async function handleSfuRequest(
         const info = (await infoResp.json()) as {
           exists?: boolean
           participants?: unknown[]
+          hasPassword?: boolean
         }
         const participantCount = Array.isArray(info.participants)
           ? info.participants.length
@@ -551,6 +577,27 @@ export async function handleSfuRequest(
             { error: "room_full", max: MAX_PARTICIPANTS_PER_ROOM },
             429
           )
+        }
+        // 房间有密码 → 验证
+        if (info.exists && info.hasPassword && !isReconnect) {
+          if (!passwordHash) {
+            return json({ error: "password_required" }, 403)
+          }
+          // 需要从 DO 获取密码哈希进行比对
+          // 这里通过 room-info 的扩展接口获取（仅 Worker 可调用）
+          const verifyResp = await roomStub.fetch(
+            new Request("https://room/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "verify-password",
+                passwordHash,
+              }),
+            })
+          )
+          if (!verifyResp.ok) {
+            return json({ error: "password_incorrect" }, 403)
+          }
         }
       }
     } catch {
@@ -582,6 +629,8 @@ export async function handleSfuRequest(
           action: "register",
           // #234: browser entry path — coarse analytics-only telemetry.
           creationSource: "browser",
+          // 密码哈希（仅建房时有效，已有房间忽略）
+          ...(passwordHash ? { passwordHash } : {}),
           participant: {
             id: participantId,
             name,

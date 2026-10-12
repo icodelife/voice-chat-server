@@ -361,6 +361,8 @@ type ControlRequest =
         runtimeHost?: RuntimeHostProjection
         runtimeProviderReattachProofHash?: string
       }
+      // 房间密码的 SHA-256 哈希（仅建房时有效）
+      passwordHash?: string
       // #234: coarse internal entry-path telemetry classified by the caller
       // from request context (browser session vs User-Agent). Analytics
       // only — never authentication, authorization, or Room behavior.
@@ -435,6 +437,7 @@ type ControlRequest =
       token: string
     }
   | { action: "room-info"; participantId?: string }
+  | { action: "verify-password"; passwordHash: string }
   | {
       action: "agent-register"
       // #176 Phase A wire shape: the Runtime Host arrives as a full
@@ -2779,7 +2782,23 @@ export class RoomSession extends DurableObject<RoomSessionEnv> {
               request.participantId
             )
           : { canSubscribeHumanAudio: false, canPublishVoice: false },
+        // 房间是否设置了密码（不返回哈希本身）
+        hasPassword: !!room?.passwordHash,
       })
+    }
+
+    // 验证房间密码（仅 Worker 调用，不对外暴露）
+    if (request.action === "verify-password") {
+      const room = await this.activeRoom()
+      if (!room || !room.passwordHash) {
+        return this.json({ error: "no_password" }, 400)
+      }
+      const providedHash =
+        typeof request.passwordHash === "string" ? request.passwordHash : ""
+      if (providedHash !== room.passwordHash) {
+        return this.json({ error: "password_incorrect" }, 403)
+      }
+      return this.json({ ok: true })
     }
 
     if (request.action === "agent-wait") return this.waitForAgent(request)
@@ -2991,6 +3010,12 @@ export class RoomSession extends DurableObject<RoomSessionEnv> {
           nextTranscriptSequence: 1,
           attachments: [],
           nextMessageSequence: 0,
+          // 建房时设置密码（仅新房间有效）
+          ...(request.action === "register" &&
+          typeof request.passwordHash === "string" &&
+          request.passwordHash
+            ? { passwordHash: request.passwordHash }
+            : {}),
           meetingNotes: NO_MEETING_NOTES,
           agentVoice: {},
           pendingMediaCleanup: [],
