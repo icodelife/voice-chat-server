@@ -1,8 +1,70 @@
 import { handleSfuRequest } from "./src/sfu/server"
 import { handleRoomRequest, isRoomRequestPath } from "./src/room/server"
+import { isAllowedOrigin } from "./src/common/origin"
 
 export { RoomSession } from "./src/do/RoomSession"
 export { ServerRegistry } from "./src/do/ServerRegistry"
+
+// 房间列表（大厅）：从注册表拿房间名，并发查询各房实时人数
+// 只返回有人在的房间，按人数倒序。注册表不可用时降级返回空列表。
+async function handleRoomList(env: any): Promise<Response> {
+  try {
+    const registry = env.SERVER_REGISTRY.get(
+      env.SERVER_REGISTRY.idFromName("registry")
+    )
+    const listResp = await registry.fetch(new Request("https://registry/list"))
+    if (!listResp.ok) return Response.json({ rooms: [] })
+    const { rooms } = (await listResp.json()) as {
+      rooms: { room: string; lastActiveAt: number }[]
+    }
+    if (!Array.isArray(rooms) || rooms.length === 0) {
+      return Response.json({ rooms: [] })
+    }
+
+    const infos = await Promise.all(
+      rooms.map(async ({ room, lastActiveAt }) => {
+        try {
+          const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+          const infoResp = await stub.fetch(
+            new Request("https://room/", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "room-info" }),
+            })
+          )
+          if (!infoResp.ok) return null
+          const info = (await infoResp.json()) as {
+            exists?: boolean
+            participants?: unknown[]
+            hasPassword?: boolean
+          }
+          const count = Array.isArray(info.participants)
+            ? info.participants.length
+            : 0
+          // 不存在的房间或没人的房间不上榜
+          if (!info.exists || count === 0) return null
+          return {
+            room,
+            participants: count,
+            hasPassword: !!info.hasPassword,
+            lastActiveAt,
+          }
+        } catch {
+          return null
+        }
+      })
+    )
+
+    const list = infos
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort(
+        (a, b) => b.participants - a.participants || b.lastActiveAt - a.lastActiveAt
+      )
+    return Response.json({ rooms: list })
+  } catch {
+    return Response.json({ rooms: [] })
+  }
+}
 
 // CORS 头：允许任意来源（联邦模式）
 function corsHeaders(origin: string | null): Record<string, string> {
@@ -47,6 +109,21 @@ export default {
     // Room API
     else if (isRoomRequestPath(pathname)) {
       response = await handleRoomRequest(request, env)
+    }
+    // 房间列表（大厅）：GET /api/rooms
+    else if (pathname === "/api/rooms" && request.method === "GET") {
+      // 联邦模式下允许无 Origin 的原生客户端（小程序/App）
+      if (
+        !isAllowedOrigin(
+          origin,
+          (env as any)?.ALLOWED_ORIGINS,
+          (env as any)?.DISABLE_ORIGIN_CHECK
+        )
+      ) {
+        response = Response.json({ error: "forbidden_origin" }, { status: 403 })
+      } else {
+        response = await handleRoomList(env)
+      }
     }
     // 健康检查
     else if (pathname === "/" || pathname === "/health") {

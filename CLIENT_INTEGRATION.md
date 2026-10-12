@@ -245,7 +245,40 @@ PUT /api/sfu/tracks/close
 
 ---
 
-## 4. 其他接口
+## 4. 房间列表（大厅）
+
+```http
+GET {BASE_URL}/api/rooms
+```
+
+**成功响应 (200)：**
+```json
+{
+  "rooms": [
+    {
+      "room": "test123",
+      "participants": 3,
+      "hasPassword": false,
+      "lastActiveAt": 1728900000000
+    }
+  ]
+}
+```
+
+- 只返回当前有人在线的房间，按人数倒序排列
+- `participants` 是实时在线人数（只给数量，不暴露成员昵称/ID）
+- `hasPassword: true` 的房间，进房前需让用户输入密码（见 Step 1 密码房规则）
+- 联邦模式下小程序/App 无需 Origin 头可直接调用
+- 建议列表页每 10-30 秒刷新一次，不要高频轮询
+
+**小程序大厅流程：**
+```
+1. GET /api/rooms 拿列表 → 渲染房间卡片（房号、人数、🔒标识）
+2. 用户点某房间 → POST /api/sfu/session { room, name, password? }（有🔒先弹密码框）
+3. 后续走标准进房流程（Step 2 WebSocket → Step 3 发布音频 → Step 4 订阅）
+```
+
+## 5. 其他接口
 
 ### 静音 / 取消静音
 
@@ -264,7 +297,7 @@ GET {BASE_URL}/health
 
 ---
 
-## 5. 服务端配置（部署者参考）
+## 6. 服务端配置（部署者参考）
 
 | 变量 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -277,7 +310,7 @@ GET {BASE_URL}/health
 
 ---
 
-## 6. 客户端实现检查清单
+## 7. 客户端实现检查清单
 
 - [ ] Step 1: `POST /api/sfu/session` 创建会话，处理所有错误码
 - [ ] Step 2: 建立 WebSocket，处理断线重连（指数退避）
@@ -287,11 +320,12 @@ GET {BASE_URL}/health
 - [ ] 成员/静音状态：通过 `state` 广播 diff `participants` 列表维护，静音读 `participants[].media.muted`
 - [ ] 密码房：密码输入 UI，处理 `password_required` / `password_incorrect`
 - [ ] 离开房间：`PUT /api/sfu/tracks/close` + 关闭 WebSocket
+- [ ] 房间列表页：`GET /api/rooms` 渲染大厅（房号、人数、🔒标识），有🔒的房间先进密码框再调 session 接口
 - [ ] 房间人数显示：通过 `state` 广播的 participants 列表维护（上限 10 人）
 
 ---
 
-## 7. 常见问题
+## 8. 常见问题
 
 **Q: 官方服务器和自部署服务器的协议有区别吗？**
 A: 没有。协议完全一致，唯一区别是自部署服务器可通过环境变量调整策略（如关闭密码房、收紧 Origin）。

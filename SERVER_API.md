@@ -45,7 +45,25 @@ Response 403:
 { "error": "password_not_allowed" } # 服务器禁用了密码房
 ```
 
-### 2. 建立 WebSocket 信令通道
+### 2. 获取房间列表（大厅）
+
+```
+GET /api/rooms
+
+Response 200:
+{
+  "rooms": [
+    { "room": "test123", "participants": 3, "hasPassword": false, "lastActiveAt": 1728900000000 }
+  ]
+}
+```
+
+- 只返回当前有人的房间，按人数倒序排列
+- `participants` 为实时在线人数（只返回数量，不暴露成员信息）
+- `hasPassword` 为 true 时，进房需先让用户输入密码
+- 联邦模式下无 Origin 的原生客户端可直接调用
+
+### 3. 建立 WebSocket 信令通道
 
 ```
 GET /api/sfu/ws?room=test123&participantId=xxx&token=yyy
