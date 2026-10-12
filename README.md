@@ -31,7 +31,7 @@
 1. 点击本仓库的 **Use this template** 创建你自己的仓库
 2. 在 Settings → Secrets → Actions 添加：
    - `CLOUDFLARE_API_TOKEN`：Cloudflare API Token（权限：Workers Scripts → Edit，Calls → Edit）
-   - `CLOUDFLARE_ACCOUNT_ID`：你的 Cloudflare 账号 ID
+   - `CLOUDFLARE_ACCOUNT_ID`：可选，不填则从 token 自动获取
 3. Actions → Cloudflare Deploy → Run workflow → `fresh_install=true`
 4. 跑完后把日志里的 `SFU_APP_ID` 加到 Secrets
 
