@@ -21,7 +21,8 @@ Content-Type: application/json
 Body:
 {
   "room": "test123",
-  "name": "张三"
+  "name": "张三",
+  "password": "123456"  # 可选，4-64 位；建房时设置，已有房间则验证
 }
 
 Response 200:
@@ -34,6 +35,11 @@ Response 200:
 
 Response 429:
 { "error": "room_full", "max": 10 }  # 房间满员
+
+Response 403:
+{ "error": "password_required" }    # 房间有密码但未提供
+{ "error": "password_incorrect" }   # 密码错误
+{ "error": "password_not_allowed" } # 服务器禁用了密码房
 ```
 
 ### 2. 建立 WebSocket 信令通道

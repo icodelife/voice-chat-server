@@ -43,6 +43,24 @@
 |------|------|------|
 | `ALLOW_PASSWORD_ROOMS` | Variables | 设为 `false` 可关闭密码房功能。默认不设置即为开启 |
 
+### 密码房
+
+建房时在 `POST /api/sfu/session` 的 body 中传入 `password` 字段（4-64 位）：
+
+```json
+{
+  "room": "my-room",
+  "name": "张三",
+  "password": "123456"
+}
+```
+
+- 密码以 SHA-256 哈希形式存储，服务端不存明文
+- 房间创建时设置密码，之后不可更改
+- 已有密码的房间，进房时必须传正确密码，否则返回 `403 password_required` / `password_incorrect`
+- 无密码的房间，传密码会被忽略（防止抢房）
+- 如需禁用密码房，在仓库 Settings → Variables 中设置 `ALLOW_PASSWORD_ROOMS=false`
+
 ### API 接口
 
 | 接口 | 说明 |
