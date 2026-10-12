@@ -31,7 +31,7 @@
 2. 在 Settings → Secrets → Actions 添加：
    - `CLOUDFLARE_API_TOKEN`：Cloudflare API Token（权限：Workers Scripts → Edit，Calls → Edit）
    - `CLOUDFLARE_ACCOUNT_ID`：你的 Cloudflare 账号 ID
-3. Actions → One-Click Deploy → Run workflow → `fresh_install=true`
+3. Actions → Cloudflare Deploy → Run workflow → `fresh_install=true`
 4. 跑完后把日志里的 `SFU_APP_ID` 加到 Secrets
 
 完成！你的服务端地址是 `https://voice-chat-server.<你的子域>.workers.dev`
