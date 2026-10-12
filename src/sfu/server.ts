@@ -587,7 +587,7 @@ export async function handleSfuRequest(
     const roomStub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
     try {
       const infoResp = await roomStub.fetch(
-        new Request("https://room/", {
+        new Request("https://room/control", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "room-info" }),
@@ -621,7 +621,7 @@ export async function handleSfuRequest(
           // 需要从 DO 获取密码哈希进行比对
           // 这里通过 room-info 的扩展接口获取（仅 Worker 可调用）
           const verifyResp = await roomStub.fetch(
-            new Request("https://room/", {
+            new Request("https://room/control", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({

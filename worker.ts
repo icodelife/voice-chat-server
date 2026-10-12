@@ -26,7 +26,7 @@ async function handleRoomList(env: any): Promise<Response> {
         try {
           const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
           const infoResp = await stub.fetch(
-            new Request("https://room/", {
+            new Request("https://room/control", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ action: "room-info" }),
@@ -137,7 +137,7 @@ export default {
         try {
           const stub = (env as any).SFU_ROOM.get((env as any).SFU_ROOM.idFromName(room))
           const infoResp = await stub.fetch(
-            new Request("https://room/", {
+            new Request("https://room/control", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ action: "room-info" }),
