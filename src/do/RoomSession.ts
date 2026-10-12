@@ -363,6 +363,8 @@ type ControlRequest =
       }
       // 房间密码的 SHA-256 哈希（仅建房时有效）
       passwordHash?: string
+      // 房间显示名（仅建房时有效）
+      title?: string
       // #234: coarse internal entry-path telemetry classified by the caller
       // from request context (browser session vs User-Agent). Analytics
       // only — never authentication, authorization, or Room behavior.
@@ -1282,6 +1284,10 @@ export class RoomSession extends DurableObject<RoomSessionEnv> {
         // 房间密码哈希：normalize 时必须保留，否则密码房功能在首次 load 后即失效
         ...(typeof stored.passwordHash === "string" && stored.passwordHash
           ? { passwordHash: stored.passwordHash }
+          : {}),
+        // 房间显示名：同上，normalize 时保留
+        ...(typeof stored.title === "string" && stored.title
+          ? { title: stored.title }
           : {}),
         liveTranscript: normalizedLiveProducer.liveTranscript,
         liveTranscriptSegments: normalizedLiveTranscript.liveTranscriptSegments,
@@ -2788,6 +2794,8 @@ export class RoomSession extends DurableObject<RoomSessionEnv> {
           : { canSubscribeHumanAudio: false, canPublishVoice: false },
         // 房间是否设置了密码（不返回哈希本身）
         hasPassword: !!room?.passwordHash,
+        // 房间显示名（未设置时为 null，客户端回退显示 ID）
+        title: room?.title ?? null,
       })
     }
 
@@ -3019,6 +3027,12 @@ export class RoomSession extends DurableObject<RoomSessionEnv> {
           typeof request.passwordHash === "string" &&
           request.passwordHash
             ? { passwordHash: request.passwordHash }
+            : {}),
+          // 建房时设置显示名（仅新房间有效）
+          ...(request.action === "register" &&
+          typeof request.title === "string" &&
+          request.title
+            ? { title: request.title }
             : {}),
           meetingNotes: NO_MEETING_NOTES,
           agentVoice: {},

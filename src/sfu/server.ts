@@ -488,6 +488,9 @@ export async function handleSfuRequest(
     const name = typeof body.name === "string" ? body.name.trim() : ""
     const password =
       typeof body.password === "string" ? body.password : ""
+    // 房间显示名（可选，建房时设置；已有房间忽略）
+    const title =
+      typeof body.title === "string" ? body.title.trim().slice(0, 30) : ""
     if (body.kind === "agent") return badRequest("agent_sessions_not_supported")
     if (!room || room.length > MAX_ROOM_LENGTH)
       return badRequest("invalid_room")
@@ -708,6 +711,8 @@ export async function handleSfuRequest(
           creationSource: "browser",
           // 密码哈希（仅建房时有效，已有房间忽略）
           ...(passwordHash ? { passwordHash } : {}),
+          // 显示名（仅建房时有效，已有房间忽略）
+          ...(title ? { title } : {}),
           participant: {
             id: participantId,
             name,

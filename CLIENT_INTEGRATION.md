@@ -47,7 +47,8 @@ Content-Type: application/json
 {
   "room": "test123",
   "name": "张三",
-  "password": "123456"    // 可选，4-64 位
+  "password": "123456",    // 可选，4-64 位
+  "title": "深夜树洞"      // 可选，最多 30 字；房间显示名，仅建房时有效
 }
 ```
 
@@ -259,6 +260,7 @@ GET {BASE_URL}/api/rooms
       "room": "test123",
       "participants": 3,
       "hasPassword": false,
+      "title": "深夜树洞",
       "lastActiveAt": 1728900000000
     }
   ]
@@ -268,6 +270,7 @@ GET {BASE_URL}/api/rooms
 - 只返回当前有人在线的房间，按人数倒序排列
 - `participants` 是实时在线人数（只给数量，不暴露成员昵称/ID）
 - `hasPassword: true` 的房间，进房前需让用户输入密码（见 Step 1 密码房规则）
+- `title` 是建房时设置的显示名，未设置时为 null，列表页显示 `title || room`
 - 联邦模式下小程序/App 无需 Origin 头可直接调用
 - 建议列表页每 10-30 秒刷新一次，不要高频轮询
 

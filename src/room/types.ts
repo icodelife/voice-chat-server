@@ -505,6 +505,8 @@ export interface RoomRecord {
   participants: Record<string, RoomParticipant>
   // 房间密码的 SHA-256 哈希（可选）。设置后进房需验证密码。
   passwordHash?: string
+  // 房间显示名（可选，建房时设置）。列表页展示用，ID 仍为技术标识。
+  title?: string
   // #176 Phase A (canonical Room model): ONE readiness projection per
   // Runtime Host id, shared by all same-host Agents. Garbage-collected when
   // no participant references the host anymore.

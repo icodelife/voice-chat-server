@@ -22,7 +22,8 @@ Body:
 {
   "room": "test123",
   "name": "张三",
-  "password": "123456"  # 可选，4-64 位；建房时设置，已有房间则验证
+  "password": "123456",  # 可选，4-64 位；建房时设置，已有房间则验证
+  "title": "深夜树洞"    # 可选，最多 30 字；建房时设置房间显示名，已有房间忽略
 }
 
 Response 200:
@@ -53,7 +54,7 @@ GET /api/rooms
 Response 200:
 {
   "rooms": [
-    { "room": "test123", "participants": 3, "hasPassword": false, "lastActiveAt": 1728900000000 }
+    { "room": "test123", "participants": 3, "hasPassword": false, "title": "深夜树洞", "lastActiveAt": 1728900000000 }
   ]
 }
 ```
@@ -61,6 +62,7 @@ Response 200:
 - 只返回当前有人的房间，按人数倒序排列
 - `participants` 为实时在线人数（只返回数量，不暴露成员信息）
 - `hasPassword` 为 true 时，进房需先让用户输入密码
+- `title` 为建房时设置的显示名，未设置时为 null（客户端回退显示 room ID）
 - 联邦模式下无 Origin 的原生客户端可直接调用
 
 ### 3. 建立 WebSocket 信令通道

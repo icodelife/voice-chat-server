@@ -37,6 +37,7 @@ async function handleRoomList(env: any): Promise<Response> {
             exists?: boolean
             participants?: unknown[]
             hasPassword?: boolean
+            title?: string | null
           }
           const count = Array.isArray(info.participants)
             ? info.participants.length
@@ -47,6 +48,7 @@ async function handleRoomList(env: any): Promise<Response> {
             room,
             participants: count,
             hasPassword: !!info.hasPassword,
+            title: typeof info.title === "string" ? info.title : null,
             lastActiveAt,
           }
         } catch {
