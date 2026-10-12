@@ -125,32 +125,6 @@ export default {
         response = await handleRoomList(env)
       }
     }
-    // 临时调试：GET /api/debug/rooms（查完删除）
-    else if (pathname === "/api/debug/rooms" && request.method === "GET") {
-      const registry = (env as any).SERVER_REGISTRY.get(
-        (env as any).SERVER_REGISTRY.idFromName("registry")
-      )
-      const listResp = await registry.fetch(new Request("https://registry/list"))
-      const regData = (await listResp.json()) as any
-      const debug: any[] = []
-      for (const { room } of regData.rooms || []) {
-        try {
-          const stub = (env as any).SFU_ROOM.get((env as any).SFU_ROOM.idFromName(room))
-          const infoResp = await stub.fetch(
-            new Request("https://room/control", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "room-info" }),
-            })
-          )
-          const info = await infoResp.json()
-          debug.push({ room, httpStatus: infoResp.status, info })
-        } catch (e) {
-          debug.push({ room, error: String(e) })
-        }
-      }
-      response = Response.json({ registry: regData, rooms: debug })
-    }
     // 健康检查
     else if (pathname === "/" || pathname === "/health") {
       response = Response.json({
