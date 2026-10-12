@@ -71,6 +71,11 @@
 
 详见 [SERVER_API.md](./SERVER_API.md)。
 
+### 客户端开发
+
+从零开发客户端（Web / iOS / Android / 桌面）请看 [CLIENT_INTEGRATION.md](./CLIENT_INTEGRATION.md)，
+包含完整对接流程、WebSocket 消息格式、错误码表和实现检查清单。
+
 ## 鸣谢
 
 本项目来源于 [free4chat](https://github.com/xwfounder/free4chat)，感谢原作者的开源贡献。
