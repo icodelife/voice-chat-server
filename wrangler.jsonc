@@ -31,8 +31,7 @@
   },
   "vars": {
     "DISABLE_ORIGIN_CHECK": "true",
-    "ROOM_APPS_ENABLED": "false",
-    "ALLOW_PASSWORD_ROOMS": "true"
+    "ROOM_APPS_ENABLED": "false"
   },
   "workers_dev": true
 }
