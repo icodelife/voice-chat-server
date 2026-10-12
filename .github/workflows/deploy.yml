@@ -34,7 +34,7 @@ jobs:
       - name: Detect Account ID
         id: account
         run: |
-          # 从 token 自动获取账号 ID（建 token 时请只勾选一个账号）
+          # 从 token 自动获取账号 ID（建 token 时勾选你授权的账户）
           RESP=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts")
           ACCOUNT_ID=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result'][0]['id'])")
