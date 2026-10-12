@@ -61,9 +61,13 @@ jobs:
         run: |
           # ALLOW_PASSWORD_ROOMS: 可选的 GitHub Variables，不设置则默认为 true（允许密码房）
           # 需要关闭时，在仓库 Settings → Variables 中设置 ALLOW_PASSWORD_ROOMS=false
+          # MAX_ROOMS_PER_SERVER: 可选的 GitHub Variables，默认 5，设为 0 不限制
           EXTRA_VARS=""
           if [ -n "${{ vars.ALLOW_PASSWORD_ROOMS }}" ]; then
-            EXTRA_VARS="--var ALLOW_PASSWORD_ROOMS:${{ vars.ALLOW_PASSWORD_ROOMS }}"
+            EXTRA_VARS="$EXTRA_VARS --var ALLOW_PASSWORD_ROOMS:${{ vars.ALLOW_PASSWORD_ROOMS }}"
+          fi
+          if [ -n "${{ vars.MAX_ROOMS_PER_SERVER }}" ]; then
+            EXTRA_VARS="$EXTRA_VARS --var MAX_ROOMS_PER_SERVER:${{ vars.MAX_ROOMS_PER_SERVER }}"
           fi
           if [ "${{ github.event.inputs.fresh_install }}" == "true" ]; then
             wrangler deploy --var "SFU_APP_ID:${{ steps.sfu.outputs.app_id }}" $EXTRA_VARS
