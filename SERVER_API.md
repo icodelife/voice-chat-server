@@ -59,6 +59,9 @@ Upgrade: websocket
    ```
    POST /api/sfu/tracks
    Body: {
+     "room": "...",
+     "participantId": "...",
+     "token": "...",
      "sessionId": "...",
      "tracks": [{
        "location": "local",
@@ -68,18 +71,23 @@ Upgrade: websocket
      }]
    }
    ```
+   缺 room / participantId / token / sessionId 会返回 400 `missing_session`
 4. 收到 SFU 的 answer 后 `setRemoteDescription`
 5. 确认发布：
    ```
    POST /api/sfu/publish-confirm
-   Body: { "sessionId": "...", "trackName": "audio" }
+   Body: { "room": "...", "participantId": "...", "token": "...", "sessionId": "...", "trackName": "audio", "kind": "audio" }
    ```
+   缺任一字段会返回 400 `missing_publication`
 
 ### 4. 订阅远端音频
 
 ```
 POST /api/sfu/tracks
 Body: {
+  "room": "...",
+  "participantId": "...",
+  "token": "...",
   "sessionId": "...",
   "tracks": [{
     "location": "remote",
@@ -93,9 +101,10 @@ Body: {
 ### 5. 关闭
 
 ```
-POST /api/sfu/tracks/close
-Body: { "sessionId": "...", "tracks": [...] }
+PUT /api/sfu/tracks/close
+Body: { "room": "...", "participantId": "...", "token": "...", "sessionId": "...", "tracks": [{ "mid": "..." }] }
 ```
+（必须是 PUT；tracks 数组每个元素必须带 `mid`）
 
 ## 文字聊天
 
@@ -104,16 +113,15 @@ Body: { "sessionId": "...", "tracks": [...] }
 ### 发送
 
 ```json
-{ "type": "chat", "text": "大家好", "id": "client-msg-uuid" }
+{ "type": "chat", "text": "大家好" }
 ```
+（服务端会自己生成消息 id 并广播，客户端无需传 id）
 
 ### 接收
 
-- `chat`：文字消息
-- `join`：有人加入
-- `leave`：有人离开
-- `mute`：静音状态变化
-- `track-published`：有人发布音频
+- `message`：文字消息，信封格式 `{type:"message", message:{id, peerId, name, kind, type:"text", text, createdAt, sequence}}`
+- `trackPublished`：有人发布音频，`{type:"trackPublished", participant:{id, name, kind, sessionId, track:{trackName, mid}}}`
+- `state`：房间状态变化，`{type:"state", state:{participants:[...]}}`——成员加入/离开靠 diff participants 列表推导，静音状态在 `participants[].media.muted`（服务端不广播独立的 join / leave / mute 事件）
 
 ## 环境变量
 

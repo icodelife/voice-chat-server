@@ -98,8 +98,11 @@ Upgrade: websocket
 2. 创建 RTCPeerConnection
 3. 添加音频 track（sendonly transceiver）
 4. createOffer → setLocalDescription(offer)
-5. POST /api/sfu/tracks：
+5. POST /api/sfu/tracks（也支持 PUT）：
    {
+     "room": "test123",
+     "participantId": "a1b2c3d4-...",
+     "token": "e5f6g7h8-...",
      "sessionId": "自己的sessionId",
      "tracks": [{
        "location": "local",
@@ -109,23 +112,35 @@ Upgrade: websocket
      }]
    }
    → 响应包含 SFU 的 answer SDP
+   缺 room / participantId / token / sessionId 会返回 400 missing_session
 6. setRemoteDescription(answer)
 7. POST /api/sfu/publish-confirm：
-   { "sessionId": "...", "trackName": "audio" }
+   {
+     "room": "test123",
+     "participantId": "a1b2c3d4-...",
+     "token": "e5f6g7h8-...",
+     "sessionId": "...",
+     "trackName": "audio",
+     "kind": "audio"         // "audio" 或 "video"
+   }
+   缺任一字段会返回 400 missing_publication
 ```
 
 ### Step 4: 订阅远端音频
 
-当收到 `track-published` 事件（见第 3 节）得知有人发布音频后：
+当收到 `trackPublished` 事件（见第 3 节）得知有人发布音频后：
 
 ```
 POST /api/sfu/tracks
 {
+  "room": "test123",
+  "participantId": "a1b2c3d4-...",
+  "token": "e5f6g7h8-...",
   "sessionId": "自己的sessionId",
   "tracks": [{
     "location": "remote",
-    "sessionId": "对方的sessionId",  // 从 track-published 事件中获取
-    "trackName": "audio",
+    "sessionId": "对方的sessionId",  // 从 trackPublished 事件的 participant.sessionId 获取
+    "trackName": "audio",            // 从 trackPublished 事件的 participant.track.trackName 获取
     "kind": "audio"
   }]
 }
@@ -136,9 +151,16 @@ POST /api/sfu/tracks
 ### Step 5: 离开房间
 
 ```
-POST /api/sfu/tracks/close
-{ "sessionId": "...", "tracks": [...] }
+PUT /api/sfu/tracks/close
+{
+  "room": "test123",
+  "participantId": "a1b2c3d4-...",
+  "token": "e5f6g7h8-...",
+  "sessionId": "...",
+  "tracks": [{ "mid": "0" }]   // 数组每个元素必须带 mid（SFU 分配的媒体标识）
+}
 ```
+注意：这里必须是 **PUT** 方法，用 POST 会返回 405 method_not_allowed。
 然后关闭 WebSocket 即可。服务端会在最后一人离开 30 分钟后自动清理房间数据。
 
 ---
@@ -150,65 +172,75 @@ POST /api/sfu/tracks/close
 ```json
 {
   "type": "chat",
-  "text": "大家好",
-  "id": "client-generated-uuid"
+  "text": "大家好"
 }
 ```
-- `id` 为客户端生成的消息 ID，用于去重（可选但建议）
+- 服务端收到后会自己生成消息 id 并广播，客户端无需传 id
 
 ### 3.2 接收事件
 
-所有接收的消息都是 JSON，`type` 字段区分类型：
+所有接收的消息都是 JSON，`type` 字段区分类型。共三种：`message`（文字消息）、`trackPublished`（有人发布音频）、`state`（房间成员/状态变化）。
 
 **文字消息**
 ```json
 {
-  "type": "chat",
-  "text": "大家好",
-  "name": "张三",
-  "peerId": "a1b2c3d4-...",
-  "timestamp": 1728900000000
-}
-```
-
-**有人加入**
-```json
-{
-  "type": "join",
-  "participant": {
-    "id": "a1b2c3d4-...",
-    "name": "李四"
+  "type": "message",
+  "message": {
+    "id": "服务端生成的uuid",
+    "peerId": "a1b2c3d4-...",
+    "name": "张三",
+    "kind": "human",
+    "type": "text",
+    "text": "大家好",
+    "createdAt": 1728900000000,
+    "sequence": 42
   }
 }
 ```
-
-**有人离开**
-```json
-{
-  "type": "leave",
-  "participantId": "a1b2c3d4-..."
-}
-```
-
-**静音状态变化**
-```json
-{
-  "type": "mute",
-  "participantId": "a1b2c3d4-...",
-  "muted": true
-}
-```
+注意：接收是 `{type:"message", message:{...}}` 信封格式，时间字段叫 `createdAt`。
+不要和发送的 `{type:"chat", text}` 混淆。
 
 **有人发布音频**
 ```json
 {
-  "type": "track-published",
-  "participantId": "a1b2c3d4-...",
-  "sessionId": "对方的sfu-session-id",
-  "trackName": "audio"
+  "type": "trackPublished",
+  "participant": {
+    "id": "a1b2c3d4-...",
+    "name": "李四",
+    "kind": "human",
+    "sessionId": "对方的sfu-session-id",
+    "track": {
+      "trackName": "audio",
+      "mid": "1"
+    }
+  }
 }
 ```
-收到后按 Step 4 订阅即可听到对方声音。
+注意：事件名是 camelCase 的 `trackPublished`。收到后按 Step 4 订阅即可听到对方声音。
+
+**房间状态变化（成员加入/离开、静音变化）**
+```json
+{
+  "type": "state",
+  "state": {
+    "participants": [
+      {
+        "id": "a1b2c3d4-...",
+        "name": "张三",
+        "kind": "human",
+        "connected": true,
+        "media": {
+          "sessionId": "xxx",
+          "muted": false,
+          "tracks": []
+        }
+      }
+    ]
+  }
+}
+```
+- 服务端**不会**广播独立的 `join` / `leave` / `mute` 事件。成员变化靠 diff `state.participants` 列表自行推导。
+- 静音状态在 `participants[].media.muted` 里读取。
 
 ---
 
@@ -220,6 +252,7 @@ POST /api/sfu/tracks/close
 ```json
 { "type": "mute", "muted": true }
 ```
+静音状态变化从 `state` 广播的 `participants[].media.muted` 读取（服务端不广播独立的 mute 事件）。
 
 ### 健康检查
 
@@ -247,11 +280,12 @@ GET {BASE_URL}/health
 - [ ] Step 1: `POST /api/sfu/session` 创建会话，处理所有错误码
 - [ ] Step 2: 建立 WebSocket，处理断线重连（指数退避）
 - [ ] Step 3: WebRTC 发布本地音频（getUserMedia → offer → tracks → answer → publish-confirm）
-- [ ] Step 4: 监听 `track-published` 事件，订阅远端音频
-- [ ] 文字聊天：发送 `chat` 消息，渲染接收到的 `chat` / `join` / `leave` / `mute` 事件
+- [ ] Step 4: 监听 `trackPublished` 事件，订阅远端音频
+- [ ] 文字聊天：发送 `{type:"chat", text}`；接收 `{type:"message", message:{...}}` 信封格式
+- [ ] 成员/静音状态：通过 `state` 广播 diff `participants` 列表维护，静音读 `participants[].media.muted`
 - [ ] 密码房：密码输入 UI，处理 `password_required` / `password_incorrect`
-- [ ] 离开房间：`tracks/close` + 关闭 WebSocket
-- [ ] 房间人数显示：通过 `join` / `leave` 事件维护（上限 10 人）
+- [ ] 离开房间：`PUT /api/sfu/tracks/close` + 关闭 WebSocket
+- [ ] 房间人数显示：通过 `state` 广播的 participants 列表维护（上限 10 人）
 
 ---
 
