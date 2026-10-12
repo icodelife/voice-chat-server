@@ -107,6 +107,10 @@ function originAllowed(
   route: string,
   env?: { ALLOWED_ORIGINS?: string; DISABLE_ORIGIN_CHECK?: string }
 ): boolean {
+  // 联邦模式：显式禁用检查 → 全部放行，包括无 Origin 的原生客户端（小程序/App/curl）。
+  // 安全说明：联邦模式本来就放行任何 https Origin，浏览器攻击者本来就拦不住；
+  // 接口用 token 鉴权而非 cookie，CSRF 不成立。无 Origin 限制只会卡住合法的非浏览器客户端。
+  if (env?.DISABLE_ORIGIN_CHECK === "true") return true
   const origin = request.headers.get("Origin")
   if (origin === null) return MISSING_ORIGIN_ALLOWED_ROUTES.has(route)
   return isAllowedOrigin(
