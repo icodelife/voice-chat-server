@@ -1279,6 +1279,10 @@ export class RoomSession extends DurableObject<RoomSessionEnv> {
         messages,
         taskLiveViews: {},
         permissionRequests,
+        // 房间密码哈希：normalize 时必须保留，否则密码房功能在首次 load 后即失效
+        ...(typeof stored.passwordHash === "string" && stored.passwordHash
+          ? { passwordHash: stored.passwordHash }
+          : {}),
         liveTranscript: normalizedLiveProducer.liveTranscript,
         liveTranscriptSegments: normalizedLiveTranscript.liveTranscriptSegments,
         nextLiveTranscriptEpoch:

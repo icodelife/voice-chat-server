@@ -125,13 +125,6 @@ export default {
         response = await handleRoomList(env)
       }
     }
-    // 临时调试：GET /api/debug/registry（查完删除，只读）
-    else if (pathname === "/api/debug/registry" && request.method === "GET") {
-      const registry = (env as any).SERVER_REGISTRY.get(
-        (env as any).SERVER_REGISTRY.idFromName("registry")
-      )
-      response = await registry.fetch(new Request("https://registry/list"))
-    }
     // 健康检查
     else if (pathname === "/" || pathname === "/health") {
       response = Response.json({
