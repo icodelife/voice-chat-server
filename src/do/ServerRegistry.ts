@@ -87,24 +87,6 @@ export class ServerRegistry {
       })
     }
 
-    // 临时管理接口：释放指定房间名额（测试清理用，验证后删除）
-    if (url.pathname === "/release" && request.method === "POST") {
-      let body: { room?: unknown }
-      try {
-        body = (await request.json()) as typeof body
-      } catch {
-        return Response.json({ error: "invalid_json" }, { status: 400 })
-      }
-      const room = typeof body.room === "string" ? body.room : ""
-      if (!room) {
-        return Response.json({ error: "invalid_room" }, { status: 400 })
-      }
-      const state = await this.loadState()
-      delete state.rooms[room]
-      await this.saveState(state)
-      return Response.json({ ok: true, released: room })
-    }
-
     return Response.json({ error: "not_found" }, { status: 404 })
   }
 }
