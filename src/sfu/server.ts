@@ -555,7 +555,8 @@ export async function handleSfuRequest(
     }
 
     // 限流：每服务端最多 N 个活跃房间（默认 5，设为 0 不限制）
-    // 重连不占新名额，直接跳过
+    // "活跃"统一定义为"当前有连接中的参与者"（与 /api/rooms 一致），
+    // 避免"名额满但列表空"的不一致。重连不占新名额，直接跳过。
     if (!isReconnect) {
       const maxRooms = parseInt(env.MAX_ROOMS_PER_SERVER ?? "5", 10)
       if (!Number.isNaN(maxRooms) && maxRooms > 0) {
@@ -563,19 +564,60 @@ export async function handleSfuRequest(
           const registry = env.SERVER_REGISTRY.get(
             env.SERVER_REGISTRY.idFromName("registry")
           )
-          const checkResp = await registry.fetch(
-            new Request("https://registry/check", {
+          const listResp = await registry.fetch(
+            new Request("https://registry/list")
+          )
+          const { rooms: listed } = (await listResp.json()) as {
+            rooms: { room: string; lastActiveAt: number }[]
+          }
+          const listedRooms = Array.isArray(listed) ? listed : []
+
+          let needLiveCheck = listedRooms.length >= maxRooms
+          if (needLiveCheck) {
+            // 名录已满时，用实时人数精确判定（并发查各房）
+            const liveCounts = await Promise.all(
+              listedRooms.map(async ({ room: r }) => {
+                try {
+                  const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(r))
+                  const infoResp = await stub.fetch(
+                    new Request("https://room/control", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "room-info" }),
+                    })
+                  )
+                  if (!infoResp.ok) return { room: r, live: 0 }
+                  const info = (await infoResp.json()) as {
+                    exists?: boolean
+                    participants?: unknown[]
+                  }
+                  const n = Array.isArray(info.participants)
+                    ? info.participants.length
+                    : 0
+                  return { room: r, live: info.exists ? n : 0 }
+                } catch {
+                  return { room: r, live: 0 }
+                }
+              })
+            )
+            const liveRooms = liveCounts.filter((x) => x.live > 0)
+            const currentLive =
+              liveCounts.find((x) => x.room === room)?.live ?? 0
+            // 当前房间已有活人 → 加入不新增房间，直接放行；
+            // 否则按实时有人房间数判定是否超限
+            if (currentLive === 0 && liveRooms.length >= maxRooms) {
+              return json({ error: "room_limit_reached", max: maxRooms }, 429)
+            }
+          }
+
+          // 上报名录（供列表功能用）
+          await registry.fetch(
+            new Request("https://registry/touch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ room, maxRooms }),
+              body: JSON.stringify({ room }),
             })
           )
-          if (checkResp.status === 429) {
-            return json(
-              { error: "room_limit_reached", max: maxRooms },
-              429
-            )
-          }
         } catch {
           // 注册表查询失败 → 不阻塞建会话（降级），与 room-info 检查保持一致
         }
