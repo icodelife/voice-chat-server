@@ -1,0 +1,84 @@
+name: One-Click Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      fresh_install:
+        description: '全新安装（会创建新的 SFU App）'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'worker.ts'
+      - 'wrangler.jsonc'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
+      - name: Create SFU App (fresh install only)
+        if: github.event.inputs.fresh_install == 'true'
+        id: sfu
+        run: |
+          RESP=$(curl -s -X POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"voice-chat-server"}' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/calls/apps")
+          echo "app_id=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['uid'])")" >> $GITHUB_OUTPUT
+          echo "app_secret=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['secret'])")" >> $GITHUB_OUTPUT
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Worker
+        run: |
+          if [ "${{ github.event.inputs.fresh_install }}" == "true" ]; then
+            wrangler deploy --var "SFU_APP_ID:${{ steps.sfu.outputs.app_id }}"
+          else
+            wrangler deploy --var "SFU_APP_ID:${{ secrets.SFU_APP_ID }}"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Set SFU Secret (fresh install only)
+        if: github.event.inputs.fresh_install == 'true'
+        run: |
+          printf '%s' '${{ steps.sfu.outputs.app_secret }}' | wrangler secret put SFU_APP_SECRET
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Enable workers.dev
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"enabled":true}' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/voice-chat-server/subdomain"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Output SFU credentials (fresh install only)
+        if: github.event.inputs.fresh_install == 'true'
+        run: |
+          echo "::warning::新的 SFU App 已创建，请保存以下信息到 GitHub Secrets："
+          echo "::warning::SFU_APP_ID=${{ steps.sfu.outputs.app_id }}"
+          echo "::warning::SFU_APP_SECRET=(已自动设置)"

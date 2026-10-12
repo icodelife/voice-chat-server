@@ -1,0 +1,568 @@
+export type ParticipantKind = "human" | "agent"
+
+export type {
+  TaskLiveViewComponent,
+  TaskLiveViewAction,
+  TaskLiveViewScalar,
+  TaskLiveViewSnapshot,
+} from "../common/taskLiveView"
+import type { TaskLiveViewSnapshot } from "../common/taskLiveView"
+
+export type AgentActivityState =
+  | "working"
+  | "thinking"
+  | "using_tools"
+  | "responding"
+
+export interface AgentActivityProjection {
+  agentParticipantId: string
+  scopeId: string
+  state: AgentActivityState
+}
+
+export type RoomMediaTrackKind = "audio" | "video"
+
+export interface RoomMediaTrack {
+  trackName: string
+  kind: RoomMediaTrackKind
+  mid?: string
+}
+
+export interface RoomMediaState {
+  sessionId: string
+  muted: boolean
+  fileChannelReady: boolean
+  // Phase 0 Room App transport readiness. This is only a public transport
+  // hint; App payloads still cross the sandbox MessagePort boundary and never
+  // use this field as authorization.
+  appDataChannelReady?: boolean
+  tracks: RoomMediaTrack[]
+  // Cloudflare-assigned `mid`s for an agent's active *remote* (subscribe)
+  // track negotiations on this sessionId — never set for a human. Exists
+  // solely so the DO can actively close these tracks server-side when the
+  // Meeting Notes grant naming this agent is revoked (Stop, reassignment,
+  // leave, lease expiry): flipping room state alone does not stop RTP
+  // already flowing over an established PeerConnection. Stripped out of
+  // every human-facing broadcast (see RoomSession.stateFor) — it is
+  // Cloudflare session bookkeeping, not participant-visible state.
+  agentSubscribedMids?: string[]
+  // Cloudflare-assigned mid of the agent's single published voice audio
+  // track (#83) — the revocation handle for server-side close; never
+  // broadcast to clients.
+  agentPublishedMid?: string
+  // Private revocation metadata retained while the public `tracks` entry is
+  // announced after the Runtime's bounded silent publisher priming. The
+  // Runtime does not drain user PCM until a Human subscription ACKs readiness.
+  agentPublishedTrackName?: string
+  // Set only after a Human has completed the remote-track negotiation for the
+  // current Agent Voice publication. Private readiness bookkeeping; never
+  // broadcast or returned from room_info.
+  agentVoiceReady?: boolean
+}
+
+// #176 Phase A (canonical Room model, #178 review): one coarse, secret-free
+// readiness projection PER Runtime Host, stored once in RoomRecord
+// .runtimeHosts and shared by every resident Agent of that host. The
+// runtimeHostId is a stable opaque, Room-scoped grouping key derived by the
+// local Runtime (never hostname/username/IP/MAC, never the raw root seed);
+// the speech booleans mean "this host can currently produce STT/TTS if a
+// Room grant authorizes it". Discovery metadata only — never authorization,
+// never a credential detail.
+export interface RuntimeHostProjection {
+  runtimeHostId: string
+  speech: { stt: boolean; tts: boolean }
+}
+
+// #176 Phase B: private durable verification material for the explicit
+// Human-to-Runtime-Host association. This is RoomRecord-only storage; never
+// send it in RoomState, room_info, Harness context, logs, or diagnostics.
+export interface RuntimeHostProviderAssociation {
+  humanParticipantId: string
+  claimedAt: number
+  providerHandleHash: string
+  // Server-private proof membership. A Runtime Host id is public discovery
+  // metadata, so an association remains live only while at least one current
+  // Agent on this Host has actually proved possession of the private handle.
+  // Never project these ids to RoomState or room_info.
+  verifiedParticipantIds: string[]
+  // Browser-owned refresh proof. Only the one-way hash is persisted; it is
+  // usable for a short grace window after the associated Human disconnects.
+  reattachProofHash?: string
+  reattachExpiresAt?: number
+  // A fresh browser registration can arrive before the old WebSocket close
+  // reaches the Durable Object. An exact proof may reserve this one bounded
+  // handoff while the current Human is still connected; ownership moves only
+  // after that old connection actually closes. This remains server-private
+  // and is never a second provider identity or a RoomState projection.
+  pendingReattach?: {
+    humanParticipantId: string
+    expiresAt: number
+  }
+}
+
+// Browser-safe projection for future Human-facing feature admission. Both ids
+// are already Room-scoped/public; neither a claim nor provider capability is.
+export interface RuntimeHostProviderPublicAssociation {
+  humanParticipantId: string
+  claimedAt: number
+}
+
+// One-time claim bookkeeping only. `claimHash` is the map key and remains
+// server-private because it is redemption-capable until consumed or expired.
+export interface PendingRuntimeHostProviderClaim {
+  humanParticipantId: string
+  expiresAt: number
+  reattachProofHash?: string
+}
+
+export interface AgentCapabilities {
+  text: true
+  // #106 Phase A: the capability tokens this Agent explicitly chose to
+  // advertise for THIS room (for example "code.edit", "browser.authenticated").
+  // Pure discovery metadata chosen by the Runtime/Harness — never an
+  // authorization grant, never scanned from installed tools, never a claim
+  // another participant may invoke. Room-ephemeral: gone when the room is.
+  advertised?: string[]
+}
+
+// #106 Phase B lifecycle: request → accepted | declined → completed | failed.
+// Free4Chat transports these envelopes and correlates them by requestId; it
+// never decides, retries, or interprets them.
+export type CollabEventKind =
+  | "request"
+  | "accepted"
+  | "declined"
+  | "completed"
+  | "failed"
+
+export interface CollabEvent {
+  requestId: string
+  kind: CollabEventKind
+  fromParticipantId: string
+  targetParticipantId: string
+  summary?: string
+  details?: Record<string, string>
+  attachmentIds?: string[]
+}
+
+// #286: Room-native ACP permission presentation. The Room carries only the
+// bounded, sanitized fields a Human needs to understand and choose an
+// option; it carries only a bounded action presentation and never carries ACP
+// credentials, the raw tool input, or policy state.
+export interface PermissionToolCall {
+  title: string
+  kind?: string
+  summary?: string
+  details?: Record<string, string>
+}
+
+export interface PermissionOption {
+  // Native ACP option identity/presentation is preserved. Free4Chat does not
+  // translate these into its own permission categories.
+  optionId: string
+  name: string
+  kind?: string
+}
+
+export type PermissionEvent =
+  | {
+      // Fresh random Room-correlation id from the resident Runtime bridge.
+      // This is deliberately not the Harness ACP JSON-RPC request id.
+      requestId: string
+      kind: "request"
+      agentParticipantId: string
+      toolCall: PermissionToolCall
+      options: PermissionOption[]
+      createdAt: number
+      expiresAt: number
+    }
+  | {
+      requestId: string
+      kind: "resolved"
+      agentParticipantId: string
+      selectedOptionId: string
+      humanParticipantId: string
+      humanName: string
+      createdAt: number
+      expiresAt: number
+    }
+  | {
+      requestId: string
+      kind: "expired"
+      agentParticipantId: string
+      createdAt: number
+      expiresAt: number
+    }
+
+// Server-only pending index. The request presentation is duplicated here so
+// retries remain deterministic even if the bounded message ring evicts the
+// original request before its lifecycle closes.
+export interface PermissionRequestRecord {
+  requestId: string
+  agentParticipantId: string
+  // Canonical collaboration Task correlation for a Task-scoped permission;
+  // absent for the ordinary Room conversation.
+  taskRequestId?: string
+  sequence: number
+  event: Extract<PermissionEvent, { kind: "request" }>
+}
+
+export interface RoomParticipant {
+  id: string
+  name: string
+  kind: ParticipantKind
+  connected: boolean
+  joinedAt: number
+  lastSeenAt: number
+  connectionNonce?: string
+  token: string
+  capabilities?: AgentCapabilities
+  // #111 Observable Agent Workspace v0: metadata for this Agent's single
+  // latest explicitly-published workspace snapshot. Metadata only — bytes
+  // live in bounded DO chunk storage under surface:* keys and are readable
+  // solely by current participants with a matching snapshotId. Opt-in,
+  // Agent-only, own-surface-only; never authorization and never history.
+  surface?: RoomSurfaceV1
+  // #176 Phase A (canonical Room model): the Room-scoped Runtime Host id
+  // behind this Agent (agents only). Readiness lives ONCE per host in
+  // RoomRecord.runtimeHosts, shared by all same-host Agents; the credential
+  // itself never becomes Room state.
+  runtimeHostId?: string
+  media?: RoomMediaState
+}
+
+// #111 v1 snapshot descriptor. kind is fixed; snapshotId is server-generated
+// per successful publish; mimeType is one of the three supported image
+// formats; size is byte count; updatedAt is the publish epoch ms.
+export interface RoomSurfaceV1 {
+  kind: "workspace-snapshot"
+  snapshotId: string
+  mimeType: AgentImageMimeType
+  size: number
+  updatedAt: number
+}
+
+export interface RoomMessage {
+  id: string
+  peerId: string
+  name: string
+  kind: ParticipantKind
+  type: "text" | "action"
+  text?: string
+  actionType?: string
+  actionPayload?: Record<string, string>
+  // Set only when actionType is "collab": the structured #106 Phase B
+  // envelope validated by do/collab.ts. targets carries the addressed
+  // participant so the event wakes exactly the targeted resident Runtime.
+  collab?: CollabEvent
+  // Set only when actionType is "permission": a bounded Room-native ACP
+  // request/resolution lifecycle. Agent delivery is filtered by the DO to
+  // the exact agentParticipantId in this envelope.
+  permission?: PermissionEvent
+  // #309: validated correlation to an existing canonical collaboration
+  // request. This is not a client-selected generic scope id.
+  taskRequestId?: string
+  targets?: string[]
+  createdAt: number
+  sequence: number
+}
+
+export type AgentImageMimeType = "image/jpeg" | "image/png" | "image/webp"
+export type AgentTextMimeType =
+  | "text/plain"
+  | "text/markdown"
+  | "text/csv"
+  | "application/json"
+  | "text/yaml"
+export type AgentAttachmentMimeType = AgentImageMimeType | AgentTextMimeType
+
+// #117: every MIME the bounded room attachment store can legitimately hold
+// (mirrors the DO/server allow-lists). Browser-safe: used for strict
+// client-side validation of artifact read payloads.
+export const ROOM_ATTACHMENT_MIME_TYPES: readonly AgentAttachmentMimeType[] = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "text/yaml",
+]
+
+/** #117: payload returned by the authenticated Human attachment read route.
+ * Metadata is the safe public subset; `data` is base64 bytes validated
+ * strictly against this metadata before any rendering. */
+export interface RoomAttachmentRead {
+  attachment: Pick<
+    RoomAttachment,
+    "id" | "fileName" | "mimeType" | "size" | "taskRequestId"
+  >
+  data: string
+}
+
+export interface RoomAttachment {
+  id: string
+  senderId: string
+  senderName: string
+  // #234: kind of the AUTHENTICATED uploader, captured at upload time (never
+  // accepted from the client). Persisted so artifacts stay truthfully
+  // classified — and Agent artifacts stay visible — after the sender leaves.
+  senderKind: ParticipantKind
+  mimeType: AgentAttachmentMimeType
+  fileName: string
+  size: number
+  chunkCount: number
+  createdAt: number
+  sequence: number
+  // Present only for an Agent artifact explicitly correlated with a retained
+  // Task request. Omitted means the ordinary Room artifact timeline.
+  taskRequestId?: string
+  // #363 (second review): the composer's explicit wake intent for a
+  // Task-correlated Human attachment, persisted with the record so a
+  // reconnect/replay rebuilds the exact same `addressed` value. It is never
+  // derived from the Task correlation alone: `true` means an attachment-only
+  // Task submission that addresses the participating Task Agent(s), while
+  // `false`/absent means Task context only — the following addressed Task text
+  // stays the single wake boundary. An Agent-authored Task artifact always
+  // persists `false`, and a Room-scope attachment carries no wake intent at
+  // all.
+  taskWake?: boolean
+}
+
+// #234: browser-safe standalone Room attachment projection. Bounded metadata
+// only — bytes stay in DO chunk storage and are read exclusively through the
+// authenticated attachment read path (never a public URL). senderKind is
+// resolved server-side from the sender's participant record at projection
+// time; the browser renders Agent-authored artifacts standalone in the
+// timeline while Human browser files keep their existing DataChannel bubble
+// (their Agent-consumption copies are never duplicated as separate items).
+export interface RoomAttachmentProjection {
+  id: string
+  senderId: string
+  senderName: string
+  // The kind persisted on the attachment record at upload time — the sender
+  // may have left the Room; the artifact classification does not depend on
+  // the live roster.
+  senderKind: ParticipantKind
+  fileName: string
+  mimeType: AgentAttachmentMimeType
+  size: number
+  sequence: number
+  createdAt: number
+  taskRequestId?: string
+}
+
+// Room-scoped Meeting Notes media-listening grant (#82). Visible to every
+// participant via room state — never a capability secret. `active: false`
+// is the only state that carries no `agentParticipantId`/`startedAt`;
+// deliberately mirrors the shape of "no grant" so a room that was never
+// started, and a room that was started then stopped, look identical.
+export interface MeetingNotesState {
+  active: boolean
+  agentParticipantId?: string
+  startedAt?: number
+}
+
+// Room-wide Live Transcript is shared, bounded context — not an Agent grant
+// and not a media capability. `producerRuntimeHostId` is deliberately only
+// public discovery/grouping metadata; the private Runtime Host provider
+// association remains the authorization proof in RoomRecord.
+export type LiveTranscriptState =
+  | { active: false }
+  | {
+      active: true
+      producerRuntimeHostId: string
+      startedByHumanParticipantId: string
+      epoch: number
+      startedAt: number
+    }
+
+// Private resident event-stream projection. It is self-targeted and contains
+// only the grant epochs needed to reconcile one local media controller; it is
+// not part of browser RoomState or the public room_info projection.
+export interface ResidentMeetingNotesState {
+  active: boolean
+  startedAt?: number
+}
+
+export type ResidentLiveTranscriptState =
+  | { active: false }
+  | {
+      active: true
+      producerRuntimeHostId: string
+      epoch: number
+    }
+
+export interface ResidentMediaState {
+  meetingNotes: ResidentMeetingNotesState
+  agentVoiceEnabledAt?: number
+  mediaAvailable: boolean
+  liveTranscript: ResidentLiveTranscriptState
+}
+
+// A committed, Room-scoped STT result. Sequence and createdAt are assigned by
+// RoomSession; speaker is derived from the current Human participant rather
+// than trusted from a Runtime callback.
+export interface LiveTranscriptSegment {
+  segmentId: string
+  epoch: number
+  sequence: number
+  participantId: string
+  speaker: string
+  text: string
+  createdAt: number
+}
+
+// A Room-wide publish authorization for one currently connected Agent. The
+// entry exists only while enabled; absence means muted. enabledAt is the
+// participant-specific authorization epoch consumed by resident Runtimes.
+export interface AgentVoiceGrant {
+  enabled: true
+  enabledAt: number
+}
+
+// Canonical Agent Voice authorization. This deliberately carries no false
+// entries and no Runtime Host details: readiness belongs to runtimeHosts and
+// authorization belongs to the participant that will publish the audio.
+export type AgentVoiceState = Record<string, AgentVoiceGrant>
+
+// Directional media permissions for an Agent media session (#83) — booleans
+// only, never secrets or media identifiers.
+export interface AgentMediaPermissions {
+  canSubscribeHumanAudio: boolean
+  canPublishVoice: boolean
+}
+
+export interface RoomState {
+  createdAt: number
+  expiresAt: number
+  participants: Array<Omit<RoomParticipant, "token" | "connectionNonce">>
+  // #176 Phase A: one readiness projection per Runtime Host id (see
+  // RoomRecord.runtimeHosts).
+  runtimeHosts?: Record<string, RuntimeHostProjection>
+  // #176 Phase B: explicit Room-scoped Human ↔ Runtime Host associations.
+  // The corresponding claim/provider-handle material is server-private.
+  runtimeHostProviders?: Record<string, RuntimeHostProviderPublicAssociation>
+  messages: RoomMessage[]
+  // #316: one current, server-validated declarative Live View per Task.
+  // Local button/input state never returns to RoomState.
+  taskLiveViews?: Record<string, TaskLiveViewSnapshot>
+  // #234: bounded standalone Room attachment metadata for the Human
+  // timeline, with server-resolved sender kind. Optional in the wire
+  // contract so older browser clients that cached the prior state shape
+  // keep decoding RoomState safely.
+  attachments?: RoomAttachmentProjection[]
+  // Present on every current RoomSession projection. Optional in the wire
+  // contract so older browser clients that cached the prior state shape keep
+  // decoding RoomState safely.
+  liveTranscript?: LiveTranscriptState
+  liveTranscriptSegments?: LiveTranscriptSegment[]
+  meetingNotes: MeetingNotesState
+  // Whether the server-side Meeting Notes media capability (the
+  // AGENT_MEDIA_ENABLED master switch) is on in this environment at all —
+  // independent of whether any grant is currently active. The client must
+  // never offer Start, and must never claim "Listening", when this is
+  // false: every actual Runtime media request would 403 regardless of the
+  // room-visible grant.
+  meetingNotesMediaAvailable: boolean
+  agentVoice: AgentVoiceState
+  // Transient coarse Runtime activity. This is kept outside RoomRecord and
+  // disappears on Runtime disconnect or Durable Object restart.
+  agentActivities?: AgentActivityProjection[]
+  // Coarse Worker media admission switch. Per-Agent UI availability still
+  // comes from the Runtime Host's TTS readiness, never from this field.
+  agentVoiceMediaAvailable: boolean
+  // Experimental Room App kill switch. The catalog remains curated in the
+  // browser; this flag only enables the host/transport seam in an environment.
+  roomAppsEnabled?: boolean
+}
+
+// A Cloudflare Realtime track-close attempt that hasn't been confirmed
+// successful yet (a non-2xx response, missing credentials, or a network
+// failure) — retained so RoomSession's alarm can retry it, rather than
+// silently losing track of media that must still be revoked. Server-only:
+// never part of RoomState (see realtimeMedia.ts).
+export interface PendingMediaCleanup {
+  sessionId: string
+  mids: string[]
+}
+
+// #228: continuous 2+-participant collaboration interval state. Opened when
+// the Room's current participant count reaches 2, closed (and removed) when
+// it falls below 2. Duration is derived at close time — DO lifetime, Room
+// storage retention, and single-resident idle time are never counted.
+export interface CollaborationActivity {
+  startedAt: number
+  sawHuman: boolean
+  sawAgent: boolean
+  peakParticipantCount: number
+}
+
+export interface RoomRecord {
+  createdAt: number
+  expiresAt: number
+  participants: Record<string, RoomParticipant>
+  // #176 Phase A (canonical Room model): ONE readiness projection per
+  // Runtime Host id, shared by all same-host Agents. Garbage-collected when
+  // no participant references the host anymore.
+  runtimeHosts?: Record<string, RuntimeHostProjection>
+  // #228: the currently OPEN 2+-participant collaboration interval, if any.
+  collaborationActivity?: CollaborationActivity
+  // Server-private Phase B authorization state. `runtimeHostProviders`
+  // retains only a one-way provider handle hash; claims are hash-keyed and
+  // short-lived. Neither is copied into RoomState.
+  runtimeHostProviders?: Record<string, RuntimeHostProviderAssociation>
+  runtimeHostProviderClaims?: Record<string, PendingRuntimeHostProviderClaim>
+  messages: RoomMessage[]
+  // #316: ephemeral current Task Live View snapshots; no history.
+  taskLiveViews?: Record<string, TaskLiveViewSnapshot>
+  // #286: bounded pending permission requests. Resolved/expired requests are
+  // represented in the canonical message ring and removed from this index.
+  permissionRequests?: Record<string, PermissionRequestRecord>
+  liveTranscript: LiveTranscriptState
+  liveTranscriptSegments: LiveTranscriptSegment[]
+  // Next values to allocate. They are Room-local counters, never timestamps
+  // or ordinary message/event cursors.
+  nextLiveTranscriptEpoch: number
+  nextTranscriptSequence: number
+  attachments: RoomAttachment[]
+  nextMessageSequence: number
+  meetingNotes: MeetingNotesState
+  agentVoice: AgentVoiceState
+  pendingMediaCleanup: PendingMediaCleanup[]
+}
+
+export interface RoomCapabilities {
+  text: true
+  audio: true
+  screenShare: true
+  files: true
+  agentText: true
+  agentImages: true
+  agentTargeting: true
+}
+
+export interface AgentEvent {
+  sequence: number
+  type: "text" | "action" | "image"
+  // #303: only the sanitized addressed projection of a structured collab
+  // event carries its task correlation scope. Ordinary Room text has none.
+  scopeId?: string
+  participant: {
+    id: string
+    name: string
+    kind: ParticipantKind
+  }
+  text?: string
+  actionType?: string
+  actionPayload?: Record<string, string>
+  collab?: CollabEvent
+  permission?: PermissionEvent
+  attachment?: Pick<
+    RoomAttachment,
+    "id" | "fileName" | "mimeType" | "size" | "taskRequestId"
+  >
+  addressed: boolean
+  createdAt: number
+}

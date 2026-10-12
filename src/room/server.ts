@@ -1,0 +1,393 @@
+import { isAllowedOrigin } from "../common/origin"
+import { isRuntimeProviderClaimHash } from "../common/runtimeProviderCredential"
+import {
+  encodeTaskAttachmentWake,
+  parseTaskAttachmentWake,
+  TASK_ATTACHMENT_WAKE_HEADER,
+} from "../common/taskAttachmentWake"
+import type { RoomSession } from "../do/RoomSession"
+import { validateRuntimeHost } from "../do/runtimeHost"
+
+const MAX_ROOM_LENGTH = 64
+const MAX_AGENT_ATTACHMENT_BYTES = 768 * 1024
+const MAX_PERMISSION_REQUEST_BODY_BYTES = 64 * 1024
+const AGENT_EVENT_PATH = "/api/room/agent-events"
+const AGENT_ACTIVITY_PATH = "/api/room/agent-activity"
+const ROOM_REQUEST_PATHS = new Set([
+  "/api/room/attachments",
+  "/api/room/live-transcript/append",
+  AGENT_EVENT_PATH,
+  AGENT_ACTIVITY_PATH,
+  "/api/room/permissions/request",
+  "/api/room/runtime-provider/connect",
+  "/api/room/surfaces/read",
+  "/api/room/attachments/read",
+])
+const SUPPORTED_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  // Text-like attachments are also stored for agent read_attachment (#82);
+  // the MCP layer returns them as text content instead of ImageContent.
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "text/yaml",
+])
+
+export interface RoomProtocolEnv {
+  SFU_ROOM: DurableObjectNamespace<RoomSession>
+  ALLOWED_ORIGINS?: string
+  DISABLE_ORIGIN_CHECK?: string
+}
+
+// Keep the Worker entrypoint and the protocol handler on the same allowlist.
+// A path that is implemented below but omitted here falls through to the
+// Next.js app and becomes an opaque HTML 404 to native Runtime clients.
+export function isRoomRequestPath(pathname: string): boolean {
+  return ROOM_REQUEST_PATHS.has(pathname)
+}
+
+function json(data: unknown, status = 200): Response {
+  return Response.json(data, { status })
+}
+
+export async function handleRoomRequest(
+  request: Request,
+  env: RoomProtocolEnv
+): Promise<Response> {
+  const pathname = new URL(request.url).pathname
+  const isAgentEventSocket = pathname === AGENT_EVENT_PATH
+  // The resident Runtime is a native client and normally has no browser
+  // Origin. Its existing participant capability remains the authorization
+  // boundary; a present Origin is still checked so another website cannot
+  // use the endpoint as a cross-origin browser transport.
+  if (
+    !isAllowedOrigin(
+      request.headers.get("Origin"),
+      env.ALLOWED_ORIGINS,
+      env.DISABLE_ORIGIN_CHECK
+    ) &&
+    !(isAgentEventSocket && request.headers.get("Origin") === null)
+  )
+    return json({ error: "forbidden_origin" }, 403)
+
+  // #111: Human-browser read path for Observable Agent Workspace snapshots.
+  // POST-only with participant credentials in headers (never query strings);
+  // the DO enforces membership and exact snapshotId match.
+  if (isAgentEventSocket) {
+    if (request.method !== "GET")
+      return json({ error: "method_not_allowed" }, 405)
+    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+      return json({ error: "websocket_upgrade_required" }, 426)
+    const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+    const participantId =
+      request.headers.get("X-Room-Participant-Id")?.trim() ?? ""
+    const headerToken = request.headers.get("X-Room-Participant-Token") ?? ""
+    const authorization = request.headers.get("Authorization") ?? ""
+    const bearerToken = authorization.match(/^Bearer\s+(.+)$/i)?.[1] ?? ""
+    if (headerToken && bearerToken && headerToken !== bearerToken)
+      return json({ error: "unauthorized" }, 401)
+    const token = bearerToken || headerToken
+    const rawCursor = request.headers.get("X-Room-Cursor") ?? ""
+    const cursor = Number(rawCursor)
+    if (
+      !room ||
+      room.length > MAX_ROOM_LENGTH ||
+      !participantId ||
+      !token ||
+      !Number.isSafeInteger(cursor) ||
+      cursor < 0
+    )
+      return json({ error: "missing_room_capability" }, 400)
+    const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+    const doRequest = new Request("https://room/agent-events", request)
+    return stub.fetch(doRequest)
+  }
+
+  // Runtime-only coarse Harness activity. This is intentionally a tiny
+  // authenticated control request rather than a reverse resident WebSocket
+  // protocol: the body carries only a scope and one enum, and the DO keeps it
+  // transient without waking Agents or writing the Room message log.
+  if (pathname === AGENT_ACTIVITY_PATH) {
+    if (request.method !== "POST")
+      return json({ error: "method_not_allowed" }, 405)
+    const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+    const participantId = request.headers.get("X-Room-Participant-Id") ?? ""
+    const token = request.headers.get("X-Room-Participant-Token") ?? ""
+    if (!room || room.length > MAX_ROOM_LENGTH || !participantId || !token)
+      return json({ error: "missing_room_capability" }, 400)
+    const declaredSize = Number(request.headers.get("Content-Length") ?? "0")
+    if (declaredSize > 4096) return json({ error: "request_too_large" }, 413)
+    let body: { scopeId?: unknown; activity?: unknown }
+    try {
+      const bytes = new Uint8Array(await request.arrayBuffer())
+      if (bytes.byteLength > 4096)
+        return json({ error: "request_too_large" }, 413)
+      body = JSON.parse(new TextDecoder().decode(bytes)) as typeof body
+    } catch {
+      return json({ error: "invalid_request" }, 400)
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      return json({ error: "invalid_request" }, 400)
+    const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+    return stub.fetch("https://room/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "agent-activity",
+        participantId,
+        token,
+        scopeId: body.scopeId,
+        activity: body.activity ?? null,
+      }),
+    })
+  }
+
+  // Runtime-only control transport for a committed STT result. This is not
+  // an MCP tool and accepts no media identifiers, speaker labels, provider
+  // payloads, or raw audio: the authenticated RoomSession action derives the
+  // speaker from sourceParticipantId and applies epoch/dedup authorization.
+  if (pathname === "/api/room/live-transcript/append") {
+    if (request.method !== "POST")
+      return json({ error: "method_not_allowed" }, 405)
+    const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+    const participantId = request.headers.get("X-Room-Participant-Id") ?? ""
+    const token = request.headers.get("X-Room-Participant-Token") ?? ""
+    if (!room || room.length > MAX_ROOM_LENGTH || !participantId || !token)
+      return json({ error: "missing_room_capability" }, 400)
+    let body: {
+      epoch?: unknown
+      segmentId?: unknown
+      sourceParticipantId?: unknown
+      text?: unknown
+    }
+    try {
+      body = (await request.json()) as typeof body
+    } catch {
+      return json({ error: "invalid_request" }, 400)
+    }
+    if (
+      typeof body.epoch !== "number" ||
+      !Number.isSafeInteger(body.epoch) ||
+      body.epoch <= 0 ||
+      typeof body.segmentId !== "string" ||
+      typeof body.sourceParticipantId !== "string" ||
+      typeof body.text !== "string"
+    )
+      return json({ error: "invalid_request" }, 400)
+    const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+    return stub.fetch("https://room/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "agent-live-transcript-append",
+        participantId,
+        token,
+        epoch: body.epoch,
+        segmentId: body.segmentId,
+        sourceParticipantId: body.sourceParticipantId,
+        text: body.text,
+      }),
+    })
+  }
+
+  // Runtime-only structured ACP permission request ingress (#286). The
+  // authenticated Agent identity stays in headers and is derived by the DO;
+  // this body is only the bounded sanitized presentation/options envelope.
+  if (pathname === "/api/room/permissions/request") {
+    if (request.method !== "POST")
+      return json({ error: "method_not_allowed" }, 405)
+    const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+    const participantId = request.headers.get("X-Room-Participant-Id") ?? ""
+    const token = request.headers.get("X-Room-Participant-Token") ?? ""
+    if (!room || room.length > MAX_ROOM_LENGTH || !participantId || !token)
+      return json({ error: "missing_room_capability" }, 400)
+    const declaredSize = Number(request.headers.get("Content-Length") ?? "0")
+    if (declaredSize > MAX_PERMISSION_REQUEST_BODY_BYTES)
+      return json({ error: "permission_request_too_large" }, 413)
+    let body: unknown
+    try {
+      const bytes = new Uint8Array(await request.arrayBuffer())
+      if (bytes.byteLength > MAX_PERMISSION_REQUEST_BODY_BYTES)
+        return json({ error: "permission_request_too_large" }, 413)
+      body = JSON.parse(new TextDecoder().decode(bytes))
+    } catch {
+      return json({ error: "invalid_request" }, 400)
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      return json({ error: "invalid_request" }, 400)
+    const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+    return stub.fetch("https://room/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "agent-send-permission",
+        participantId,
+        token,
+        request: body,
+      }),
+    })
+  }
+
+  // Runtime-only provider connection transport. Unlike ordinary MCP tools,
+  // this narrow control route is called solely by the resident Runtime: the
+  // participant capability stays in private request headers and the returned
+  // provider handle never enters a Harness/MCP tool result. A browser cannot
+  // use a public runtimeHostId to substitute for that capability.
+  if (pathname === "/api/room/runtime-provider/connect") {
+    if (request.method !== "POST")
+      return json({ error: "method_not_allowed" }, 405)
+    const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+    const participantId = request.headers.get("X-Room-Participant-Id") ?? ""
+    const token = request.headers.get("X-Room-Participant-Token") ?? ""
+    if (!room || room.length > MAX_ROOM_LENGTH || !participantId || !token)
+      return json({ error: "missing_room_capability" }, 400)
+    let body: { runtimeHost?: unknown; providerClaimHash?: unknown }
+    try {
+      body = (await request.json()) as typeof body
+    } catch {
+      return json({ error: "invalid_request" }, 400)
+    }
+    const runtimeHost = validateRuntimeHost(body.runtimeHost)
+    if (!runtimeHost.ok || !isRuntimeProviderClaimHash(body.providerClaimHash))
+      return json({ error: "invalid_request" }, 400)
+    const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+    return stub.fetch("https://room/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "agent-connect-runtime-provider",
+        participantId,
+        token,
+        runtimeHost: runtimeHost.runtimeHost,
+        providerClaimHash: body.providerClaimHash,
+      }),
+    })
+  }
+
+  if (pathname === "/api/room/surfaces/read") {
+    if (request.method !== "POST")
+      return json({ error: "method_not_allowed" }, 405)
+    const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+    const participantId = request.headers.get("X-Room-Participant-Id") ?? ""
+    const token = request.headers.get("X-Room-Participant-Token") ?? ""
+    if (!room || room.length > MAX_ROOM_LENGTH || !participantId || !token)
+      return json({ error: "missing_room_capability" }, 400)
+    let body: { sourceParticipantId?: unknown; snapshotId?: unknown }
+    try {
+      body = (await request.json()) as typeof body
+    } catch {
+      return json({ error: "invalid_request" }, 400)
+    }
+    if (
+      typeof body.sourceParticipantId !== "string" ||
+      typeof body.snapshotId !== "string" ||
+      !body.sourceParticipantId ||
+      !body.snapshotId
+    )
+      return json({ error: "invalid_request" }, 400)
+    const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+    return stub.fetch("https://room/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "agent-read-surface",
+        participantId,
+        token,
+        sourceParticipantId: body.sourceParticipantId.slice(0, 64),
+        snapshotId: body.snapshotId.slice(0, 64),
+      }),
+    })
+  }
+
+  // #117: Human-browser read of an existing room collaboration attachment.
+  // Same security shape as surfaces/read (#111): POST only, credentials in
+  // headers (never query strings), Origin allow-list; the DO enforces
+  // membership and CURRENT room.attachments metadata before touching chunks.
+  if (pathname === "/api/room/attachments/read") {
+    if (request.method !== "POST")
+      return json({ error: "method_not_allowed" }, 405)
+    const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+    const participantId = request.headers.get("X-Room-Participant-Id") ?? ""
+    const token = request.headers.get("X-Room-Participant-Token") ?? ""
+    if (!room || room.length > MAX_ROOM_LENGTH || !participantId || !token)
+      return json({ error: "missing_room_capability" }, 400)
+    let body: { attachmentId?: unknown }
+    try {
+      body = (await request.json()) as typeof body
+    } catch {
+      return json({ error: "invalid_request" }, 400)
+    }
+    if (
+      typeof body.attachmentId !== "string" ||
+      body.attachmentId.length === 0 ||
+      body.attachmentId.length > MAX_ROOM_LENGTH
+    )
+      return json({ error: "invalid_request" }, 400)
+    const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+    return stub.fetch("https://room/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "human-read-attachment",
+        participantId,
+        token,
+        attachmentId: body.attachmentId,
+      }),
+    })
+  }
+
+  if (request.method !== "POST")
+    return json({ error: "method_not_allowed" }, 405)
+
+  const room = request.headers.get("X-Room-Id")?.trim() ?? ""
+  const participantId = request.headers.get("X-Room-Participant-Id") ?? ""
+  const token = request.headers.get("X-Room-Participant-Token") ?? ""
+  if (!room || room.length > MAX_ROOM_LENGTH || !participantId || !token)
+    return json({ error: "missing_room_capability" }, 400)
+
+  const mimeType = (request.headers.get("Content-Type") ?? "")
+    .split(";", 1)[0]
+    .toLowerCase()
+  if (!SUPPORTED_IMAGE_TYPES.has(mimeType))
+    return json({ error: "unsupported_image_type" }, 415)
+
+  const declaredSize = Number(request.headers.get("Content-Length") ?? "0")
+  if (declaredSize > MAX_AGENT_ATTACHMENT_BYTES)
+    return json({ error: "attachment_too_large" }, 413)
+  const bytes = await request.arrayBuffer()
+  if (
+    bytes.byteLength === 0 ||
+    bytes.byteLength > MAX_AGENT_ATTACHMENT_BYTES ||
+    (declaredSize > 0 && declaredSize !== bytes.byteLength)
+  )
+    return json({ error: "invalid_attachment" }, 400)
+
+  const stub = env.SFU_ROOM.get(env.SFU_ROOM.idFromName(room))
+  const headers = new Headers()
+  headers.set("Content-Type", mimeType)
+  headers.set("Content-Length", String(bytes.byteLength))
+  headers.set("X-Room-Participant-Id", participantId)
+  headers.set("X-Room-Participant-Token", token)
+  const fileName = request.headers.get("X-File-Name")
+  if (fileName) headers.set("X-File-Name", fileName.slice(0, 512))
+  const taskRequestId = request.headers.get("X-Task-Request-Id")?.trim()
+  if (taskRequestId)
+    headers.set("X-Task-Request-Id", taskRequestId.slice(0, 64))
+  // #363 second review: the composer's Task wake intent crosses the transport
+  // as exactly one bounded token. Only the two recognized tokens are
+  // forwarded; an unknown value or an absent header is simply not forwarded,
+  // which the Room reads as "no explicit wake intent" — never a wake.
+  const taskWake = parseTaskAttachmentWake(
+    request.headers.get(TASK_ATTACHMENT_WAKE_HEADER)
+  )
+  if (taskWake !== undefined)
+    headers.set(TASK_ATTACHMENT_WAKE_HEADER, encodeTaskAttachmentWake(taskWake))
+  return stub.fetch("https://room/attachment", {
+    method: "POST",
+    headers,
+    body: bytes,
+  })
+}

@@ -1,0 +1,1 @@
+{"description":"语音聊天室服务端 - 基于 Cloudflare Workers + Realtime SFU","devDependencies":{"@cloudflare/workers-types":"^4.20260702.1","typescript":"^5.0.0","wrangler":"^3.0.0"},"name":"voice-chat-server","scripts":{"deploy":"wrangler deploy"},"version":"1.0.0"}
