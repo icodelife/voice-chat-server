@@ -1,0 +1,273 @@
+# voice-chat-server 客户端对接文档
+
+本文档面向需要从零开发客户端（Web / iOS / Android / 桌面）的开发者或 AI Agent。
+按此文档实现，可连接任何部署了 `voice-chat-server` 的服务端。
+
+## 1. 概述
+
+### 架构
+
+```
+客户端 ←→ Worker (HTTPS API) ←→ Cloudflare Realtime SFU (WebRTC 媒体)
+              ↓
+       Durable Object (房间状态)
+```
+
+### 核心概念
+
+| 概念 | 说明 |
+|------|------|
+| `room` | 房间 ID，任意字符串（如 `test123`）。每个 ID 对应一个独立房间，房间间完全隔离 |
+| `participantId` | 参与者 ID，服务端分配的 UUID，进房后获得 |
+| `participantToken` | 参与者凭证，UUID，必须妥善保管，后续鉴权用 |
+| `sessionId` | Cloudflare SFU 会话 ID，用于媒体发布/订阅 |
+| 无需账号 | 无登录体系，知道房间号就能进（密码房除外） |
+
+### 服务端地址
+
+- 官方服务器：`https://vc.risenav.com`
+- 自部署：`https://voice-chat-server.<你的子域>.workers.dev`
+- 健康检查：`GET /health` → `{"ok":true,"service":"voice-chat-server","version":"1.0.0"}`
+
+### 联邦模式
+
+服务端默认放开 Origin 限制（`DISABLE_ORIGIN_CHECK=true`），任何客户端可连接任何服务端。
+浏览器 Web 客户端无跨域问题（服务端已返回 CORS 头）。
+
+---
+
+## 2. 进房流程（完整步骤）
+
+### Step 1: 创建会话
+
+```http
+POST {BASE_URL}/api/sfu/session
+Content-Type: application/json
+
+{
+  "room": "test123",
+  "name": "张三",
+  "password": "123456"    // 可选，4-64 位
+}
+```
+
+**成功响应 (200)：**
+```json
+{
+  "participantId": "a1b2c3d4-...",
+  "participantToken": "e5f6g7h8-...",
+  "sessionId": "cf-sfu-session-xxx",
+  "expiresAt": 4102444800000
+}
+```
+
+**失败响应：**
+
+| 状态码 | error | 含义 | 客户端处理建议 |
+|--------|-------|------|---------------|
+| 400 | `invalid_room` / `invalid_name` / `invalid_password` | 参数不合法 | 提示用户检查输入 |
+| 403 | `password_required` | 房间有密码但未提供 | 弹出密码输入框 |
+| 403 | `password_incorrect` | 密码错误 | 提示重新输入 |
+| 403 | `password_not_allowed` | 该服务器禁用密码房 | 提示用户换服务器或不设密码 |
+| 429 | `room_full` | 房间满员（最多 10 人） | 提示房间已满 |
+| 502 | `sfu_session_failed` | SFU 会话创建失败 | 提示服务端异常，稍后重试 |
+
+**密码房规则：**
+- 建房时传 `password` 即创建密码房（密码以 SHA-256 哈希存储）
+- 房间已存在且有密码：进房必须传正确密码
+- 房间已存在但无密码：传密码会被忽略（防止恶意抢房设密码）
+- 密码只能在建房时设置，之后不可更改
+
+### Step 2: 建立 WebSocket 信令通道
+
+```http
+GET {BASE_URL}/api/sfu/ws?room=test123&participantId={participantId}&token={participantToken}
+Upgrade: websocket
+```
+
+**注意：**
+- `BASE_URL` 的 `https://` 换成 `wss://`（`http://` 换成 `ws://`）
+- 此通道用于：接收房间事件 + 收发文字消息
+- 断线后应重连（建议指数退避，最多 5 次）
+- 重连时不需要重新创建会话，用原来的 `participantId` + `token` 即可
+
+### Step 3: 发布本地音频（语音聊天）
+
+```
+1. 获取麦克风：navigator.mediaDevices.getUserMedia({ audio: true })
+2. 创建 RTCPeerConnection
+3. 添加音频 track（sendonly transceiver）
+4. createOffer → setLocalDescription(offer)
+5. POST /api/sfu/tracks：
+   {
+     "sessionId": "自己的sessionId",
+     "tracks": [{
+       "location": "local",
+       "trackName": "audio",
+       "kind": "audio",      // 必须带 kind
+       "mid": "0"            // offer 中的 mid
+     }]
+   }
+   → 响应包含 SFU 的 answer SDP
+6. setRemoteDescription(answer)
+7. POST /api/sfu/publish-confirm：
+   { "sessionId": "...", "trackName": "audio" }
+```
+
+### Step 4: 订阅远端音频
+
+当收到 `track-published` 事件（见第 3 节）得知有人发布音频后：
+
+```
+POST /api/sfu/tracks
+{
+  "sessionId": "自己的sessionId",
+  "tracks": [{
+    "location": "remote",
+    "sessionId": "对方的sessionId",  // 从 track-published 事件中获取
+    "trackName": "audio",
+    "kind": "audio"
+  }]
+}
+→ 响应包含 SFU 的 answer SDP
+→ setRemoteDescription 后即可听到对方声音
+```
+
+### Step 5: 离开房间
+
+```
+POST /api/sfu/tracks/close
+{ "sessionId": "...", "tracks": [...] }
+```
+然后关闭 WebSocket 即可。服务端会在最后一人离开 30 分钟后自动清理房间数据。
+
+---
+
+## 3. WebSocket 消息格式
+
+### 3.1 发送文字消息
+
+```json
+{
+  "type": "chat",
+  "text": "大家好",
+  "id": "client-generated-uuid"
+}
+```
+- `id` 为客户端生成的消息 ID，用于去重（可选但建议）
+
+### 3.2 接收事件
+
+所有接收的消息都是 JSON，`type` 字段区分类型：
+
+**文字消息**
+```json
+{
+  "type": "chat",
+  "text": "大家好",
+  "name": "张三",
+  "peerId": "a1b2c3d4-...",
+  "timestamp": 1728900000000
+}
+```
+
+**有人加入**
+```json
+{
+  "type": "join",
+  "participant": {
+    "id": "a1b2c3d4-...",
+    "name": "李四"
+  }
+}
+```
+
+**有人离开**
+```json
+{
+  "type": "leave",
+  "participantId": "a1b2c3d4-..."
+}
+```
+
+**静音状态变化**
+```json
+{
+  "type": "mute",
+  "participantId": "a1b2c3d4-...",
+  "muted": true
+}
+```
+
+**有人发布音频**
+```json
+{
+  "type": "track-published",
+  "participantId": "a1b2c3d4-...",
+  "sessionId": "对方的sfu-session-id",
+  "trackName": "audio"
+}
+```
+收到后按 Step 4 订阅即可听到对方声音。
+
+---
+
+## 4. 其他接口
+
+### 静音 / 取消静音
+
+通过 WebSocket 发送：
+```json
+{ "type": "mute", "muted": true }
+```
+
+### 健康检查
+
+```http
+GET {BASE_URL}/health
+→ {"ok":true,"service":"voice-chat-server","version":"1.0.0"}
+```
+
+---
+
+## 5. 服务端配置（部署者参考）
+
+| 变量 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `SFU_APP_ID` | var | — | Cloudflare Realtime App ID（必需） |
+| `SFU_APP_SECRET` | secret | — | Cloudflare Realtime App Secret（必需） |
+| `ALLOW_PASSWORD_ROOMS` | var | `true` | 设为 `false` 禁用密码房 |
+| `DISABLE_ORIGIN_CHECK` | var | `true` | 设为 `true` 放开 Origin 限制（联邦模式） |
+| `ALLOWED_ORIGINS` | var | — | 逗号分隔的白名单域名（收紧 Origin 时用） |
+
+---
+
+## 6. 客户端实现检查清单
+
+- [ ] Step 1: `POST /api/sfu/session` 创建会话，处理所有错误码
+- [ ] Step 2: 建立 WebSocket，处理断线重连（指数退避）
+- [ ] Step 3: WebRTC 发布本地音频（getUserMedia → offer → tracks → answer → publish-confirm）
+- [ ] Step 4: 监听 `track-published` 事件，订阅远端音频
+- [ ] 文字聊天：发送 `chat` 消息，渲染接收到的 `chat` / `join` / `leave` / `mute` 事件
+- [ ] 密码房：密码输入 UI，处理 `password_required` / `password_incorrect`
+- [ ] 离开房间：`tracks/close` + 关闭 WebSocket
+- [ ] 房间人数显示：通过 `join` / `leave` 事件维护（上限 10 人）
+
+---
+
+## 7. 常见问题
+
+**Q: 官方服务器和自部署服务器的协议有区别吗？**
+A: 没有。协议完全一致，唯一区别是自部署服务器可通过环境变量调整策略（如关闭密码房、收紧 Origin）。
+
+**Q: 房间数据会持久化吗？**
+A: 最后一人离开 30 分钟后自动清除。同名房间之后再进是全新的空房间。
+
+**Q: 需要处理 Turnstile 验证吗？**
+A: 不需要。模板默认不启用 Turnstile。
+
+**Q: iOS / Android 原生客户端能用吗？**
+A: 可以。API 都是标准 HTTPS + WebSocket + WebRTC，无浏览器特有依赖。注意 Origin 限制对原生 App 不生效（无 Origin 头）。
+
+**Q: 密码是明文传输的吗？**
+A: 密码通过 HTTPS POST 传输（TLS 加密），服务端只存 SHA-256 哈希。但请勿使用重要密码，房间密码仅为轻量防打扰机制。
