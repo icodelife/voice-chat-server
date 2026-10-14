@@ -261,13 +261,15 @@ GET {BASE_URL}/api/rooms
       "participants": 3,
       "hasPassword": false,
       "title": "深夜树洞",
+      "expiresAt": 4102444800000,
       "lastActiveAt": 1728900000000
     }
   ]
 }
 ```
 
-- 只返回当前有人在线的房间，按人数倒序排列
+- 返回有人在线的房间，以及 30 分钟宽限期内（没人但未销毁）的房间，按人数倒序排列
+- `participants` 是实时在线人数；为 0 时表示空闲保留中，可用 `expiresAt` 显示"X 分钟后清理"
 - `participants` 是实时在线人数（只给数量，不暴露成员昵称/ID）
 - `hasPassword: true` 的房间，进房前需让用户输入密码（见 Step 1 密码房规则）
 - `title` 是建房时设置的显示名，未设置时为 null，列表页显示 `title || room`

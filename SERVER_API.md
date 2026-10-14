@@ -54,12 +54,13 @@ GET /api/rooms
 Response 200:
 {
   "rooms": [
-    { "room": "test123", "participants": 3, "hasPassword": false, "title": "深夜树洞", "lastActiveAt": 1728900000000 }
+    { "room": "test123", "participants": 3, "hasPassword": false, "title": "深夜树洞", "expiresAt": 4102444800000, "lastActiveAt": 1728900000000 }
   ]
 }
 ```
 
-- 只返回当前有人的房间，按人数倒序排列
+- 返回有人在线的房间，以及 30 分钟宽限期内（没人但未销毁）的房间，按人数倒序排列
+- `participants` 为实时在线人数；为 0 时表示空闲保留中，`expiresAt` 为销毁时间戳
 - `participants` 为实时在线人数（只返回数量，不暴露成员信息）
 - `hasPassword` 为 true 时，进房需先让用户输入密码
 - `title` 为建房时设置的显示名，未设置时为 null（客户端回退显示 room ID）

@@ -38,17 +38,20 @@ async function handleRoomList(env: any): Promise<Response> {
             participants?: unknown[]
             hasPassword?: boolean
             title?: string | null
+            expiresAt?: number | null
           }
           const count = Array.isArray(info.participants)
             ? info.participants.length
             : 0
-          // 不存在的房间或没人的房间不上榜
-          if (!info.exists || count === 0) return null
+          // 已销毁的房间不上榜；没人但未过期的房间保留展示（30 分钟宽限期）
+          if (!info.exists) return null
           return {
             room,
             participants: count,
             hasPassword: !!info.hasPassword,
             title: typeof info.title === "string" ? info.title : null,
+            // 空房间的销毁时间戳（有人时为远期 sentinel，客户端可忽略）
+            expiresAt: typeof info.expiresAt === "number" ? info.expiresAt : null,
             lastActiveAt,
           }
         } catch {
