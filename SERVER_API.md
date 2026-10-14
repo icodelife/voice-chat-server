@@ -8,7 +8,7 @@
 - 房间标识：`room` 参数，如 `test123`
 - 每个房间对应一个独立的 Durable Object 实例，房间之间完全隔离
 - 无需账号，无需登录
-- 健康检查：`GET /health` 返回 `{"ok":true}`
+- 健康检查：`GET /health` 返回 `{"ok":true,...,"capabilities":{"passwordRooms":true,"maxRoomsPerServer":5,"maxParticipantsPerRoom":10}}`
 
 ## 语音流程（SFU）
 

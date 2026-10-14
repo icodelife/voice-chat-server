@@ -127,12 +127,22 @@ export default {
         response = await handleRoomList(env)
       }
     }
-    // 健康检查
+    // 健康检查（含服务端能力声明，供客户端决定展示哪些功能）
     else if (pathname === "/" || pathname === "/health") {
+      const e = env as any
+      const maxRoomsRaw = parseInt(e?.MAX_ROOMS_PER_SERVER ?? "5", 10)
       response = Response.json({
         ok: true,
         service: "voice-chat-server",
         version: "1.0.0",
+        capabilities: {
+          // 是否允许创建密码房（ALLOW_PASSWORD_ROOMS=false 时为 false）
+          passwordRooms: e?.ALLOW_PASSWORD_ROOMS !== "false",
+          // 每服务端最大活跃房间数（0 表示不限制）
+          maxRoomsPerServer: Number.isNaN(maxRoomsRaw) ? 5 : maxRoomsRaw,
+          // 每房间最大在线人数（与 server.ts 的 MAX_PARTICIPANTS_PER_ROOM 一致）
+          maxParticipantsPerRoom: 10,
+        },
       })
     } else {
       response = Response.json({ error: "not_found" }, { status: 404 })

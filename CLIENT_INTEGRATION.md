@@ -291,12 +291,29 @@ GET {BASE_URL}/api/rooms
 ```
 静音状态变化从 `state` 广播的 `participants[].media.muted` 读取（服务端不广播独立的 mute 事件）。
 
-### 健康检查
+### 健康检查 / 服务端能力
 
 ```http
 GET {BASE_URL}/health
-→ {"ok":true,"service":"voice-chat-server","version":"1.0.0"}
 ```
+
+```json
+{
+  "ok": true,
+  "service": "voice-chat-server",
+  "version": "1.0.0",
+  "capabilities": {
+    "passwordRooms": true,
+    "maxRoomsPerServer": 5,
+    "maxParticipantsPerRoom": 10
+  }
+}
+```
+
+- `capabilities.passwordRooms`：是否允许**创建**密码房。客户端应据此决定是否展示"开设密码房"入口；为 false 时隐藏，但已有密码房仍可输入密码加入
+- `maxRoomsPerServer`：每服务端最大活跃房间数（0 表示不限制）
+- `maxParticipantsPerRoom`：每房间最大在线人数
+- 建议客户端启动时拉取一次并缓存
 
 ---
 
